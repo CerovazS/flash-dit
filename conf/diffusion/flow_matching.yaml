@@ -1,0 +1,6 @@
+# Rectified flow matching objective
+type: flow_matching
+# Timestep sampling distribution
+timestep_sampling: logit_normal
+logit_normal_mean: 0.0
+logit_normal_std: 1.0

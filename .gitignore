@@ -1,0 +1,31 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# Outputs and artifacts
+outputs/
+slurm/*.out
+slurm/*.err
+
+# HDF5 datasets
+*.h5
+
+# Checkpoints
+*.ckpt
+*.pt
+*.pth
+
+# Hydra runtime outputs
+.hydra/
+multirun/
+
+# Editor
+.vscode/
+.idea/

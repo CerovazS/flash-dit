@@ -1,0 +1,6 @@
+devices: 4
+strategy: ddp
+precision: bf16-mixed
+max_epochs: 300
+gradient_clip_val: 1.0
+val_check_interval: 1.0

@@ -1,0 +1,10 @@
+type: muon_adamw
+# Muon: applied to all 2D weight matrices (W_q, W_k, W_v, W_o, W_up, W_down, W_gate)
+lr_muon: 0.02
+# AdamW: applied to embeddings, norms, biases, final head
+lr_adamw: 3.0e-4
+weight_decay: 0.01
+warmup_steps: 2000
+# Muon-specific
+momentum: 0.95
+ns_steps: 5

@@ -1,0 +1,27 @@
+defaults:
+  - model: flash_dit
+  - diffusion: flow_matching
+  - optimizer: muon
+  - data: fma_medium
+  - trainer: single_gpu
+  - _self_
+
+run_name: ${model.name}_${now:%Y%m%d_%H%M%S}
+output_dir: /leonardo_scratch/large/userexternal/lcerovaz/flash-dit-runs/${run_name}
+
+seed: 42
+use_wandb: false
+resume_from: null
+
+ema_beta: 0.9999
+
+vae:
+  hf_repo: stabilityai/stable-audio-open-1.0
+  cache_dir: /leonardo_scratch/fast/IscrC_LENS/lcerovaz/flash-dit-cache
+
+val:
+  generate_every_n_epochs: 5
+  n_samples: 16
+  cfg_scale: 4.0
+  sampler: heun
+  n_steps: 50
