@@ -260,12 +260,25 @@ def main(dry_run: bool = False) -> None:
 
         ok(f"Wrote {written} latent chunks.")
 
-        # Compute normalisation stats over training split
+        # Compute normalisation stats over training split in batches —
+        # avoids loading all training latents into RAM at once (~2 GB).
         info("Computing normalisation stats over training split…")
-        train_mask = ds_spl[:] == b"train"
-        train_latents = ds_lat[train_mask].astype(np.float32)  # (N_train, C, T)
-        mean = train_latents.mean(axis=(0, 2))   # (C,)
-        std  = train_latents.std(axis=(0, 2))    # (C,)
+        ch_sum  = np.zeros(LATENT_CHANNELS, dtype=np.float64)
+        ch_sum2 = np.zeros(LATENT_CHANNELS, dtype=np.float64)
+        n_vals  = 0  # total number of (channel-wise) scalar values seen
+
+        STAT_BATCH    = 512
+        train_indices = np.where(ds_spl[:] == b"train")[0]
+        for i in range(0, len(train_indices), STAT_BATCH):
+            batch_idx = train_indices[i : i + STAT_BATCH]
+            batch = ds_lat[batch_idx].astype(np.float64)       # (B, C, T)
+            flat  = batch.transpose(1, 0, 2).reshape(LATENT_CHANNELS, -1)  # (C, B*T)
+            ch_sum  += flat.sum(axis=1)
+            ch_sum2 += (flat ** 2).sum(axis=1)
+            n_vals  += flat.shape[1]
+
+        mean = (ch_sum / n_vals).astype(np.float32)
+        std  = np.sqrt(np.maximum(ch_sum2 / n_vals - (ch_sum / n_vals) ** 2, 0.0)).astype(np.float32)
         f.attrs["mean"] = mean
         f.attrs["std"]  = std
         ok(f"Normalisation stats: mean={mean.mean():.4f}, std={std.mean():.4f}")
