@@ -47,10 +47,14 @@ CACHE_DIR = Path(os.environ.get(
     "FLASH_DIT_CACHE",
     "/leonardo_scratch/fast/IscrC_LENS/lcerovaz/flash-dit-cache"
 ))
-FMA_DIR    = Path("/leonardo_scratch/large/userexternal/lcerovaz/fma/fma_medium")
-# Standard FMA tracks.csv contains: track_id, genre_top, split (train/val/test)
-TRACKS_CSV = Path("/leonardo_scratch/large/userexternal/lcerovaz/fma/fma_metadata/tracks.csv")
-OUT_DIR    = Path("/leonardo_scratch/large/userexternal/lcerovaz/flash-dit-latents/stable_audio_open")
+# Audio root: fma_medium on CINECA (only medium downloaded), fma_large on gauss
+# (large is a superset; the subset filter in tracks.csv handles selection).
+FMA_DIR    = Path(os.environ.get("FMA_AUDIO_DIR",
+                  "/leonardo_scratch/large/userexternal/lcerovaz/fma/fma_medium"))
+TRACKS_CSV = Path(os.environ.get("FMA_METADATA_DIR",
+                  "/leonardo_scratch/large/userexternal/lcerovaz/fma/fma_metadata")) / "tracks.csv"
+OUT_DIR    = Path(os.environ.get("FLASH_DIT_LATENTS_DIR",
+                  "/leonardo_scratch/large/userexternal/lcerovaz/flash-dit-latents/stable_audio_open"))
 BATCH_SIZE = 16
 
 
@@ -168,8 +172,8 @@ def _load_fma_tracks() -> list[tuple[str, int, Path]]:
 
     tracks.csv is a multi-level CSV where the first two rows are header rows.
     Relevant columns (after flattening):
-        - (track, id)       → track ID
-        - (track, split)    → 'training' / 'validation' / 'test'
+        - (set, subset)      → 'medium' / 'small' / 'large'
+        - (set, split)       → 'training' / 'validation' / 'test'
         - (track, genre_top) → top-level genre string
     """
     import pandas as pd
@@ -178,7 +182,11 @@ def _load_fma_tracks() -> list[tuple[str, int, Path]]:
     # Keep only rows that belong to fma_medium
     df = df[df[("set", "subset")] == "medium"]
 
-    genre2id: dict[str, int] = {}
+    # Canonical alphabetically-sorted genre map — stable across runs and machines.
+    all_genres = sorted(df[("track", "genre_top")].dropna().unique().tolist())
+    genre2id: dict[str, int] = {g: i for i, g in enumerate(all_genres)}
+    genre2id["Unknown"] = len(genre2id)   # fallback for missing labels
+
     tracks = []
     split_map = {"training": "train", "validation": "val", "test": "test"}
 
@@ -187,12 +195,11 @@ def _load_fma_tracks() -> list[tuple[str, int, Path]]:
         sp = split_map.get(split_raw, None)
         if sp is None:
             continue
-        genre = str(row[("track", "genre_top")] or "Unknown")
+        genre = str(row[("track", "genre_top")]) if pd.notna(row[("track", "genre_top")]) else "Unknown"
         path  = _track_id_to_path(int(tid))
         if not path.exists():
+            warn(f"Audio file not found, skipping: {path}")
             continue
-        if genre not in genre2id:
-            genre2id[genre] = len(genre2id)
         tracks.append((sp, genre2id[genre], path))
 
     return tracks, genre2id
