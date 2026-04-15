@@ -28,8 +28,8 @@
 
 - [ ] **Git identity** — Configurare `git config --global user.name` e `user.email`
       (ora usa nome/email automatici del cluster).
-- [ ] **WandB / logging opzionale** — Il codice ha `use_wandb: false` in config ma
-      non è ancora cablato in `scripts/train.py`. Aggiungere se necessario.
+- [x] **WandB wiring** — `entity=ar_spectra`, `project=flash_dit`, gradient watch ogni 500 step,
+      full config dump. Attivare con `use_wandb=true` sulla CLI o in config.
 - [ ] **Smoke test senza GPU** — `scripts/train.py` non è testato end-to-end.
       Aggiungere un test `trainer.fast_dev_run=true` con latenti mock.
 - [ ] **scripts/train.py proxy** — Quando il training carica il VAE da HF al volo,

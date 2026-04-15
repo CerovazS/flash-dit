@@ -102,13 +102,15 @@ def main(cfg: DictConfig) -> None:
 
     loggers = [L.pytorch.loggers.CSVLogger(cfg.output_dir, name="csv")]
     if cfg.get("use_wandb", False):
-        loggers.append(
-            L.pytorch.loggers.WandbLogger(
-                project="flash-dit",
-                name=cfg.run_name,
-                save_dir=cfg.output_dir,
-            )
+        wandb_logger = L.pytorch.loggers.WandbLogger(
+            entity="ar_spectra",
+            project="flash_dit",
+            name=cfg.run_name,
+            save_dir=cfg.output_dir,
+            config=dict(OmegaConf.to_container(cfg, resolve=True)),
         )
+        wandb_logger.watch(lit.model, log="gradients", log_freq=500)
+        loggers.append(wandb_logger)
 
     trainer = L.Trainer(
         max_epochs=cfg.trainer.max_epochs,
