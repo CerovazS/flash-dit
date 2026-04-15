@@ -27,6 +27,9 @@ dependencies = [
     "wandb>=0.17",
 ]
 
+[tool.uv]
+no-build-isolation-package = ["flash-attn"]
+
 [[tool.uv.index]]
 name = "pytorch"
 url = "https://download.pytorch.org/whl/cu121"
@@ -36,10 +39,6 @@ explicit = true
 torch = { index = "pytorch" }
 torchvision = { index = "pytorch" }
 torchaudio = { index = "pytorch" }
-stable-audio-tools = { path = "../stable-audio-tools", editable = true }
-
-[tool.uv.extra-build-dependencies]
-flash-attn = ["setuptools"]
 
 [build-system]
 requires = ["setuptools>=68", "wheel"]
