@@ -24,7 +24,7 @@ dependencies = [
     "laion-clap",
     "stable-audio-tools",
     "pandas>=2.0",
-    "wandb>=0.17",
+    "wandb",
 ]
 
 [tool.uv]
