@@ -64,13 +64,15 @@ class FinalLayer(nn.Module):
     def __init__(self, d_model: int, out_channels: int) -> None:
         super().__init__()
         self.norm = nn.RMSNorm(d_model)
-        self.adaLN = AdaLNModulation(d_cond=d_model, d_model=d_model)
+        self.adaLN = nn.Sequential(nn.SiLU(), nn.Linear(d_model, 2 * d_model, bias=True))
+        nn.init.zeros_(self.adaLN[-1].weight)
+        nn.init.zeros_(self.adaLN[-1].bias)
         self.linear = nn.Linear(d_model, out_channels, bias=True)
         nn.init.zeros_(self.linear.weight)
         nn.init.zeros_(self.linear.bias)
 
     def forward(self, x: torch.Tensor, c: torch.Tensor) -> torch.Tensor:
-        shift, scale, *_ = self.adaLN(c)
+        shift, scale = self.adaLN(c).chunk(2, dim=-1)
         x = modulate(self.norm(x), shift, scale)
         return self.linear(x)
 

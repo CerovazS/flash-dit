@@ -100,7 +100,7 @@ def _model_call(
     x2 = torch.cat([x, x], dim=0)
     t2 = torch.cat([t, t], dim=0)
     # First half: conditioned (genre label as-is)
-    # Second half: unconditioned (null class via force_drop)
+    # Second half: unconditioned (explicit null class token)
     y_cond   = y
     y_null   = torch.full_like(y, model.y_embedder.null_class)
     y2 = torch.cat([y_cond, y_null], dim=0)

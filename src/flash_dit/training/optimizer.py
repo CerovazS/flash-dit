@@ -110,7 +110,19 @@ def build_optimizer(
         [adamw]       when optimizer_type == 'adamw'.
     """
     if optimizer_type == "adamw":
-        return [AdamW(model.parameters(), lr=lr_adamw, weight_decay=weight_decay, betas=betas_adamw)]
+        decay, no_decay = [], []
+        for name, p in model.named_parameters():
+            if not p.requires_grad:
+                continue
+            if p.ndim <= 1 or "embedding" in name:
+                no_decay.append(p)
+            else:
+                decay.append(p)
+        return [AdamW(
+            [{"params": decay, "weight_decay": weight_decay},
+             {"params": no_decay, "weight_decay": 0.0}],
+            lr=lr_adamw, betas=betas_adamw,
+        )]
 
     # Separate 2-D matrices (Muon) from everything else (AdamW)
     muon_params, adamw_params = [], []

@@ -7,6 +7,7 @@ from pathlib import Path
 
 import lightning as L
 import torch
+from lightning.pytorch.utilities.rank_zero import rank_zero_only
 
 from ..diffusion.flow_matching import flow_matching_loss
 from ..utils.console import info, ok, warn
@@ -143,17 +144,47 @@ class FlashDiTModule(L.LightningModule):
         ok(f"[val] saved {len(audio)} WAVs to {out_dir}")
         return paths
 
+    @rank_zero_only
     def _log_audio_to_wandb(self, wav_paths: list[Path]) -> None:
-        """Upload up to 2 WAVs to WandB as audio samples."""
+        """Upload WAVs to WandB as playable media and downloadable artifacts."""
         import wandb
 
         if wandb.run is None:
             return
+        if not wav_paths:
+            return
+
+        epoch = int(self.current_epoch + 1)
+        step = int(self.global_step)
         clips = [
-            wandb.Audio(str(p), sample_rate=44100, caption=f"epoch {self.current_epoch + 1} — {p.name}")
+            wandb.Audio(str(p), sample_rate=44100, caption=f"epoch {epoch} - {p.name}")
             for p in wav_paths
         ]
-        wandb.log({"val/audio": clips}, commit=True)
+        table = wandb.Table(columns=["epoch", "sample", "audio"])
+        artifact = wandb.Artifact(
+            name=f"validation-audio-epoch-{epoch:06d}",
+            type="validation-audio",
+            metadata={"epoch": epoch, "global_step": step, "sample_rate": 44100},
+        )
+
+        for path in wav_paths:
+            table.add_data(
+                epoch,
+                path.name,
+                wandb.Audio(str(path), sample_rate=44100, caption=f"epoch {epoch} - {path.name}"),
+            )
+            artifact.add_file(str(path), name=f"epoch_{epoch:06d}/{path.name}")
+
+        wandb.log(
+            {
+                "val/audio": clips,
+                "val/audio_table": table,
+                "val/audio_epoch": epoch,
+            },
+            step=step,
+            commit=True,
+        )
+        wandb.log_artifact(artifact)
 
     def _score_audiobox(self, wav_paths: list[Path]) -> None:
         """Score generated WAVs with Audiobox Aesthetics and log mean metrics."""
@@ -194,7 +225,7 @@ class FlashDiTModule(L.LightningModule):
             """Linear warmup → cosine decay, independent of base lr."""
             if step < warmup:
                 return step / max(1, warmup)
-            progress = (step - warmup) / max(1, total - warmup)
+            progress = min(1.0, (step - warmup) / max(1, total - warmup))
             return 0.5 * (1.0 + math.cos(math.pi * progress))
 
         schedulers = [
