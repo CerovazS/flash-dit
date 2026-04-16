@@ -30,3 +30,5 @@ multirun/
 .vscode/
 !.vscode/settings.json
 .idea/
+wandb/
+runs/
