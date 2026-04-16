@@ -17,6 +17,7 @@ from hydra.utils import instantiate
 from omegaconf import DictConfig, OmegaConf
 
 from flash_dit.data.datamodule import LatentDataModule
+from flash_dit.training.jsonl_logger import JSONLMetricsCallback
 from flash_dit.training.lit_module import FlashDiTModule
 from flash_dit.utils.console import info, ok, warn
 
@@ -58,6 +59,10 @@ def main(cfg: DictConfig) -> None:
     # ------------------------------------------------------------------
     # Lightning module
     # ------------------------------------------------------------------
+    evaluation_cfg = (
+        OmegaConf.to_container(cfg.evaluation, resolve=True) if "evaluation" in cfg else None
+    )
+
     lit = FlashDiTModule(
         model=model,
         optimizer_type=cfg.optimizer.type,
@@ -66,6 +71,8 @@ def main(cfg: DictConfig) -> None:
         weight_decay=cfg.optimizer.weight_decay,
         warmup_steps=cfg.optimizer.warmup_steps,
         total_steps=total_steps,
+        muon_momentum=cfg.optimizer.get("momentum", 0.95),
+        muon_ns_steps=cfg.optimizer.get("ns_steps", 5),
         ema_beta=cfg.get("ema_beta", 0.9999),
         val_generate_every=cfg.val.generate_every_n_epochs,
         val_n_samples=cfg.val.n_samples,
@@ -74,6 +81,9 @@ def main(cfg: DictConfig) -> None:
         val_sampler=cfg.val.sampler,
         val_n_steps=cfg.val.n_steps,
         output_dir=os.path.join(cfg.output_dir, "generated"),
+        metrics_dir=os.path.join(cfg.output_dir, "metrics"),
+        evaluation_cfg=evaluation_cfg,
+        h5_path=cfg.data.h5_path,
     )
 
     # Attach VAE decoder and normalisation stats for generation during validation
@@ -92,16 +102,30 @@ def main(cfg: DictConfig) -> None:
     # ------------------------------------------------------------------
     os.makedirs(cfg.output_dir, exist_ok=True)
 
+    # Two ModelCheckpoint callbacks: top-k stores weights only (small, for
+    # downstream eval/inference), while `last.ckpt` keeps the full optimizer
+    # state for resumability. This avoids storing optimizer state 4× when
+    # only one resumable snapshot is ever needed.
+    ckpt_dir = os.path.join(cfg.output_dir, "checkpoints")
     callbacks = [
         L.pytorch.callbacks.ModelCheckpoint(
-            dirpath=os.path.join(cfg.output_dir, "checkpoints"),
+            dirpath=ckpt_dir,
             filename="{epoch:04d}-{val/loss:.4f}",
             save_top_k=3,
             monitor="val/loss",
             mode="min",
+            save_last=False,
+            save_weights_only=True,
+        ),
+        L.pytorch.callbacks.ModelCheckpoint(
+            dirpath=ckpt_dir,
+            filename="last",
+            save_top_k=0,
             save_last=True,
+            save_weights_only=False,
         ),
         L.pytorch.callbacks.LearningRateMonitor(logging_interval="step"),
+        JSONLMetricsCallback(cfg.output_dir, every_n_train_steps=50),
     ]
 
     loggers = [L.pytorch.loggers.CSVLogger(cfg.output_dir, name="csv")]
@@ -127,7 +151,7 @@ def main(cfg: DictConfig) -> None:
         num_sanity_val_steps=cfg.trainer.get("num_sanity_val_steps", 0),
         callbacks=callbacks,
         logger=loggers,
-        gradient_clip_val=cfg.trainer.get("gradient_clip_val", 1.0),
+        gradient_clip_val=cfg.trainer.get("gradient_clip_val", None),
     )
 
     info(f"Saving outputs to: {cfg.output_dir}")
@@ -165,9 +189,11 @@ def _load_vae(cfg: DictConfig):
             model_cfg = json.load(f)
         model = create_model_from_config(model_cfg)
         state = load_file(ckpt_path)
-        pretransform_state = {k.removeprefix("pretransform."): v
-                               for k, v in state.items() if k.startswith("pretransform.")}
-        model.pretransform.load_state_dict(pretransform_state, strict=False)
+        # AutoencoderPretransform.load_state_dict delegates to self.model.load_state_dict,
+        # so keys must be relative to the inner autoencoder (strip "pretransform.model.").
+        pretransform_state = {k.removeprefix("pretransform.model."): v
+                               for k, v in state.items() if k.startswith("pretransform.model.")}
+        model.pretransform.load_state_dict(pretransform_state, strict=True)
         return model.pretransform.cuda()
     except Exception as exc:
         warn(f"Could not load VAE: {exc}")
