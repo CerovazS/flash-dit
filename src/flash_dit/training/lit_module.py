@@ -147,16 +147,13 @@ class FlashDiTModule(L.LightningModule):
         """Upload up to 2 WAVs to WandB as audio samples."""
         import wandb
 
-        for logger in self.loggers:
-            experiment = getattr(logger, "experiment", None)
-            if experiment is None or not isinstance(experiment, wandb.sdk.wandb_run.Run):
-                continue
-            clips = [
-                wandb.Audio(str(p), sample_rate=44100, caption=f"epoch {self.current_epoch + 1} — {p.name}")
-                for p in wav_paths
-            ]
-            experiment.log({"val/audio": clips}, step=self.global_step)
-            break
+        if wandb.run is None:
+            return
+        clips = [
+            wandb.Audio(str(p), sample_rate=44100, caption=f"epoch {self.current_epoch + 1} — {p.name}")
+            for p in wav_paths
+        ]
+        wandb.log({"val/audio": clips}, step=self.global_step)
 
     def _score_audiobox(self, wav_paths: list[Path]) -> None:
         """Score generated WAVs with Audiobox Aesthetics and log mean metrics."""
