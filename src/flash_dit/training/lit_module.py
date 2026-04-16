@@ -1,7 +1,6 @@
 """Lightning training module for the audio DiT."""
 from __future__ import annotations
 
-import math
 import os
 from pathlib import Path
 
@@ -218,25 +217,11 @@ class FlashDiTModule(L.LightningModule):
             weight_decay=hp.weight_decay,
         )
 
-        warmup = hp.warmup_steps
-        total  = hp.total_steps
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+            optimizers[0], T_max=hp.total_steps, eta_min=0
+        )
 
-        def _lr_lambda(step: int) -> float:
-            """Linear warmup → cosine decay, independent of base lr."""
-            if step < warmup:
-                return step / max(1, warmup)
-            progress = min(1.0, (step - warmup) / max(1, total - warmup))
-            return 0.5 * (1.0 + math.cos(math.pi * progress))
-
-        schedulers = [
-            {
-                "scheduler": torch.optim.lr_scheduler.LambdaLR(opt, _lr_lambda),
-                "interval": "step",
-            }
-            for opt in optimizers
-        ]
-
-        return optimizers, schedulers
+        return optimizers, [{"scheduler": scheduler, "interval": "step"}]
 
     # ------------------------------------------------------------------
     # Checkpoint helpers
