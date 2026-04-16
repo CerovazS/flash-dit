@@ -90,6 +90,8 @@ def main(cfg: DictConfig) -> None:
     # ------------------------------------------------------------------
     # Trainer
     # ------------------------------------------------------------------
+    os.makedirs(cfg.output_dir, exist_ok=True)
+
     callbacks = [
         L.pytorch.callbacks.ModelCheckpoint(
             dirpath=os.path.join(cfg.output_dir, "checkpoints"),
