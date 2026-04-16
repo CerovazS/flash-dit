@@ -59,7 +59,8 @@ TRACKS_CSV = Path(os.environ.get("FMA_METADATA_DIR",
                   "/leonardo_scratch/large/userexternal/lcerovaz/fma/fma_metadata")) / "tracks.csv"
 OUT_DIR    = Path(os.environ.get("FLASH_DIT_LATENTS_DIR",
                   "/leonardo_scratch/large/userexternal/lcerovaz/flash-dit-latents/stable_audio_open"))
-BATCH_SIZE = 8   # VAE uses ~2.9 GB VRAM at batch=1; batch=8 fits safely in 24 GB (3090)
+BATCH_SIZE = 1   # stable-audio-open has iterate_batch=True: VAE always encodes one sample
+                 # at a time internally — batching provides no benefit here.
 
 
 # ---------------------------------------------------------------------------
@@ -139,19 +140,20 @@ def load_audio_chunk(path: Path) -> torch.Tensor | None:
 
 
 @torch.no_grad()
-def encode_batch(vae, chunks: list[torch.Tensor]) -> np.ndarray:
-    """Encode a batch of (2, CHUNK_SAMPLES) audio tensors through the VAE encoder.
+def encode_chunk(vae, chunk: torch.Tensor) -> np.ndarray:
+    """Encode a single (2, CHUNK_SAMPLES) audio tensor through the VAE encoder.
+
+    NOTE: stable-audio-open has iterate_batch=True in its pretransform config,
+    meaning the VAE always processes one sample at a time internally regardless
+    of the batch dimension. Batching at our level provides no VRAM or speed benefit.
 
     Encoding runs in float32 (VAE weights are float32); output is cast to float16
     only for compact HDF5 storage.
 
-    Args:
-        chunks: list of (2, CHUNK_SAMPLES) float32 tensors — all must be the same length.
-
     Returns:
-        (B, LATENT_CHANNELS, LATENT_FRAMES) float16 array.
+        (1, LATENT_CHANNELS, LATENT_FRAMES) float16 array.
     """
-    batch = torch.stack(chunks).cuda().float()  # (B, 2, T)
+    batch = chunk.unsqueeze(0).cuda().float()  # (1, 2, T)
     result = vae.encode(batch)
     if isinstance(result, tuple):
         latents, info = result
@@ -159,7 +161,7 @@ def encode_batch(vae, chunks: list[torch.Tensor]) -> np.ndarray:
             latents = info["mean"]
     else:
         latents = result
-    return latents.float().cpu().numpy().astype(np.float16)  # (B, C, T_lat)
+    return latents.float().cpu().numpy().astype(np.float16)  # (1, C, T_lat)
 
 
 # ---------------------------------------------------------------------------
@@ -246,39 +248,19 @@ def main(dry_run: bool = False) -> None:
         ds_spl = f.create_dataset("split",     shape=(0,), maxshape=(None,), dtype=h5py.string_dtype())
 
         written = 0
-        buf_chunks:   list[torch.Tensor] = []
-        buf_genres:   list[int]          = []
-        buf_stems:    list[str]          = []
-        buf_splits:   list[bytes]        = []
-
-        def _flush() -> None:
-            nonlocal written
-            if not buf_chunks:
-                return
-            latents = encode_batch(vae, buf_chunks)  # (B, C, T_lat)
-            B = latents.shape[0]
-            for ds in (ds_lat, ds_gen, ds_tid, ds_spl):
-                ds.resize(written + B, axis=0)
-            ds_lat[written : written + B] = latents
-            ds_gen[written : written + B] = buf_genres
-            ds_tid[written : written + B] = buf_stems
-            ds_spl[written : written + B] = buf_splits
-            written += B
-            buf_chunks.clear(); buf_genres.clear()
-            buf_stems.clear();  buf_splits.clear()
-
         for sp, genre_id, path in tqdm(tracks, desc="encoding"):
             chunk = load_audio_chunk(path)
             if chunk is None:
                 continue
-            buf_chunks.append(chunk)
-            buf_genres.append(genre_id)
-            buf_stems.append(path.stem)
-            buf_splits.append(sp.encode())
-            if len(buf_chunks) >= BATCH_SIZE:
-                _flush()
+            latents = encode_chunk(vae, chunk)  # (1, C, T_lat)
+            for ds in (ds_lat, ds_gen, ds_tid, ds_spl):
+                ds.resize(written + 1, axis=0)
+            ds_lat[written] = latents[0]
+            ds_gen[written] = genre_id
+            ds_tid[written] = path.stem
+            ds_spl[written] = sp.encode()
+            written += 1
 
-        _flush()  # remaining tracks
         ok(f"Wrote {written} latent chunks.")
 
         # Compute normalisation stats over training split in batches —
