@@ -7,7 +7,7 @@ n_layers: 12
 n_heads: 12
 n_kv_heads: 2        # GQA: 6:1 query-to-KV ratio
 mlp_mult: 2.667      # 8/3 SwiGLU
-n_classes: 16
+n_classes: 17
 cfg_dropout: 0.1
 # Optimizations enabled
 attention_type: gqa

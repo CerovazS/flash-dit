@@ -24,6 +24,8 @@ dependencies = [
     "stable-audio-tools",
     "pandas>=2.0",
     "wandb",
+    "nvitop>=1.6.2",
+    "audiobox-aesthetics>=0.0.4",
 ]
 
 [project.optional-dependencies]

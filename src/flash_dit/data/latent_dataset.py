@@ -23,13 +23,18 @@ class LatentDataset(Dataset):
     Args:
         h5_path: path to the HDF5 file produced by precompute_latents.py.
         split:   one of 'train', 'val', 'test'.
+        seq_len: if given, randomly crop the T dimension to this many frames.
+                 The crop start is sampled uniformly; no padding is applied —
+                 every stored latent must be at least seq_len frames long.
     """
 
-    def __init__(self, h5_path: str, split: str) -> None:
+    def __init__(self, h5_path: str, split: str, seq_len: int | None = None) -> None:
         import h5py  # lazy import so the module loads without h5py installed
 
         self.h5_path = h5_path
         self.split = split.encode()
+
+        self.seq_len = seq_len
 
         # Read indices that belong to this split (done once at init).
         with h5py.File(h5_path, "r") as f:
@@ -62,6 +67,12 @@ class LatentDataset(Dataset):
 
         # Channel-wise normalisation: (C, 1) broadcast
         latent = (latent - self.mean[:, None]) / (self.std[:, None] + 1e-6)
+
+        # Random temporal crop — no padding, assumes T >= seq_len
+        if self.seq_len is not None and latent.shape[1] > self.seq_len:
+            max_start = latent.shape[1] - self.seq_len
+            start = torch.randint(0, max_start + 1, ()).item()
+            latent = latent[:, start : start + self.seq_len]
 
         return latent, genre
 

@@ -59,8 +59,7 @@ TRACKS_CSV = Path(os.environ.get("FMA_METADATA_DIR",
                   "/leonardo_scratch/large/userexternal/lcerovaz/fma/fma_metadata")) / "tracks.csv"
 OUT_DIR    = Path(os.environ.get("FLASH_DIT_LATENTS_DIR",
                   "/leonardo_scratch/large/userexternal/lcerovaz/flash-dit-latents/stable_audio_open"))
-BATCH_SIZE = 1   # stable-audio-open has iterate_batch=True: VAE always encodes one sample
-                 # at a time internally — batching provides no benefit here.
+BATCH_SIZE = 8   # encode 8 tracks per GPU call (iterate_batch disabled in load_vae)
 
 
 # ---------------------------------------------------------------------------
@@ -98,7 +97,12 @@ def load_vae(hf_token: str) -> torch.nn.Module:
     model.pretransform.load_state_dict(pretransform_state, strict=False)
 
     vae = model.pretransform.eval().cuda()
-    ok("VAE loaded and ready on GPU.")
+    # Disable per-sample iteration so the encoder processes the full batch on GPU.
+    # stable-audio-open sets iterate_batch=True in its pretransform config, which
+    # causes the VAE to loop over the batch dimension internally — defeating any
+    # VRAM / throughput benefit from batching at the caller level.
+    vae.iterate_batch = False
+    ok("VAE loaded and ready on GPU (iterate_batch disabled).")
     return vae
 
 
@@ -140,28 +144,27 @@ def load_audio_chunk(path: Path) -> torch.Tensor | None:
 
 
 @torch.no_grad()
-def encode_chunk(vae, chunk: torch.Tensor) -> np.ndarray:
-    """Encode a single (2, CHUNK_SAMPLES) audio tensor through the VAE encoder.
-
-    NOTE: stable-audio-open has iterate_batch=True in its pretransform config,
-    meaning the VAE always processes one sample at a time internally regardless
-    of the batch dimension. Batching at our level provides no VRAM or speed benefit.
+def encode_batch(vae, chunks: list[torch.Tensor]) -> np.ndarray:
+    """Encode a batch of (2, CHUNK_SAMPLES) tensors through the VAE encoder.
 
     Encoding runs in float32 (VAE weights are float32); output is cast to float16
     only for compact HDF5 storage.
 
+    Args:
+        chunks: list of B tensors each shaped (2, CHUNK_SAMPLES)
+
     Returns:
-        (1, LATENT_CHANNELS, LATENT_FRAMES) float16 array.
+        (B, LATENT_CHANNELS, LATENT_FRAMES) float16 array.
     """
-    batch = chunk.unsqueeze(0).cuda().float()  # (1, 2, T)
+    batch = torch.stack(chunks, dim=0).cuda().float()  # (B, 2, T)
     result = vae.encode(batch)
     if isinstance(result, tuple):
-        latents, info = result
-        if isinstance(info, dict) and "mean" in info:
-            latents = info["mean"]
+        latents, info_dict = result
+        if isinstance(info_dict, dict) and "mean" in info_dict:
+            latents = info_dict["mean"]
     else:
         latents = result
-    return latents.float().cpu().numpy().astype(np.float16)  # (1, C, T_lat)
+    return latents.float().cpu().numpy().astype(np.float16)  # (B, C, T_lat)
 
 
 # ---------------------------------------------------------------------------
@@ -231,11 +234,9 @@ def main(dry_run: bool = False) -> None:
 
     vae = load_vae(hf_token)
 
-    # Estimate total chunks for HDF5 pre-allocation
-    avg_chunks_per_track = 10  # 30s / 3s
-    n_est = len(tracks) * avg_chunks_per_track
-
-    info(f"Writing to {out_path} (estimated {n_est} chunks)")
+    # One latent chunk per track (single 10 s window).
+    n_est = len(tracks)
+    info(f"Writing to {out_path} (estimated {n_est} latents, batch_size={BATCH_SIZE})")
 
     with h5py.File(out_path, "w") as f:
         ds_lat = f.create_dataset(
@@ -248,19 +249,35 @@ def main(dry_run: bool = False) -> None:
         ds_spl = f.create_dataset("split",     shape=(0,), maxshape=(None,), dtype=h5py.string_dtype())
 
         written = 0
+        pending_chunks: list[torch.Tensor] = []
+        pending_meta:   list[tuple[int, str, bytes]] = []  # (genre_id, stem, split_bytes)
+
+        def flush() -> None:
+            nonlocal written
+            if not pending_chunks:
+                return
+            latents = encode_batch(vae, pending_chunks)  # (B, C, T_lat)
+            b = len(pending_chunks)
+            for ds in (ds_lat, ds_gen, ds_tid, ds_spl):
+                ds.resize(written + b, axis=0)
+            ds_lat[written : written + b] = latents
+            ds_gen[written : written + b] = [m[0] for m in pending_meta]
+            ds_tid[written : written + b] = [m[1] for m in pending_meta]
+            ds_spl[written : written + b] = [m[2] for m in pending_meta]
+            written += b
+            pending_chunks.clear()
+            pending_meta.clear()
+
         for sp, genre_id, path in tqdm(tracks, desc="encoding"):
             chunk = load_audio_chunk(path)
             if chunk is None:
                 continue
-            latents = encode_chunk(vae, chunk)  # (1, C, T_lat)
-            for ds in (ds_lat, ds_gen, ds_tid, ds_spl):
-                ds.resize(written + 1, axis=0)
-            ds_lat[written] = latents[0]
-            ds_gen[written] = genre_id
-            ds_tid[written] = path.stem
-            ds_spl[written] = sp.encode()
-            written += 1
+            pending_chunks.append(chunk)
+            pending_meta.append((genre_id, path.stem, sp.encode()))
+            if len(pending_chunks) >= BATCH_SIZE:
+                flush()
 
+        flush()  # remainder
         ok(f"Wrote {written} latent chunks.")
 
         # Compute normalisation stats over training split in batches —

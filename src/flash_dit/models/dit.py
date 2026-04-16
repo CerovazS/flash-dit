@@ -107,6 +107,7 @@ class DiffusionTransformer(nn.Module):
         use_compile: bool = False,
         n_unique_layers: int | None = None,
         max_seq_len: int = 256,
+        name: str = "",          # used by Hydra configs for run_name interpolation
     ) -> None:
         super().__init__()
         self.in_channels = in_channels

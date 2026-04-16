@@ -42,6 +42,7 @@ def main(cfg: DictConfig) -> None:
         batch_size=cfg.data.batch_size,
         num_workers=cfg.data.num_workers,
         pin_memory=True,
+        seq_len=cfg.data.get("seq_len", None),
     )
     # Need to call setup to read normalisation stats
     datamodule.setup()
@@ -68,6 +69,7 @@ def main(cfg: DictConfig) -> None:
         ema_beta=cfg.get("ema_beta", 0.9999),
         val_generate_every=cfg.val.generate_every_n_epochs,
         val_n_samples=cfg.val.n_samples,
+        val_seq_len=cfg.val.seq_len,
         val_cfg_scale=cfg.val.cfg_scale,
         val_sampler=cfg.val.sampler,
         val_n_steps=cfg.val.n_steps,
@@ -119,7 +121,8 @@ def main(cfg: DictConfig) -> None:
         strategy=cfg.trainer.get("strategy", "auto"),
         precision=cfg.trainer.get("precision", "bf16-mixed"),
         log_every_n_steps=50,
-        val_check_interval=cfg.trainer.get("val_check_interval", 1.0),
+        check_val_every_n_epoch=cfg.trainer.get("check_val_every_n_epoch", 1),
+        num_sanity_val_steps=cfg.trainer.get("num_sanity_val_steps", 0),
         callbacks=callbacks,
         logger=loggers,
         gradient_clip_val=cfg.trainer.get("gradient_clip_val", 1.0),
@@ -143,10 +146,19 @@ def _load_vae(cfg: DictConfig):
         from stable_audio_tools.models.factory import create_model_from_config
 
         cache_dir = str(cfg.vae.cache_dir)
-        config_path = hf_hub_download(cfg.vae.hf_repo, "model_config.json",
+
+        def _hf_download(filename: str) -> str:
+            try:
+                return hf_hub_download(cfg.vae.hf_repo, filename,
+                                       token=hf_token, cache_dir=cache_dir,
+                                       local_files_only=True)
+            except Exception:
+                info(f"VAE: {filename} not in cache, downloading…")
+                return hf_hub_download(cfg.vae.hf_repo, filename,
                                        token=hf_token, cache_dir=cache_dir)
-        ckpt_path = hf_hub_download(cfg.vae.hf_repo, "model.safetensors",
-                                     token=hf_token, cache_dir=cache_dir)
+
+        config_path = _hf_download("model_config.json")
+        ckpt_path   = _hf_download("model.safetensors")
         with open(config_path) as f:
             model_cfg = json.load(f)
         model = create_model_from_config(model_cfg)

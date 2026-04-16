@@ -28,6 +28,8 @@ class FlashDiTModule(L.LightningModule):
         ema_beta:            EMA decay.
         val_generate_every:  generate audio samples every N epochs.
         val_n_samples:       number of latent samples to generate.
+        val_seq_len:         latent temporal length to generate (frames).
+                             172 frames × 2048 / 44100 ≈ 8 s.
         val_cfg_scale:       CFG guidance scale at validation.
         val_sampler:         'euler' or 'heun'.
         val_n_steps:         ODE sampler steps at validation.
@@ -45,7 +47,8 @@ class FlashDiTModule(L.LightningModule):
         total_steps: int = 500_000,
         ema_beta: float = 0.9999,
         val_generate_every: int = 5,
-        val_n_samples: int = 16,
+        val_n_samples: int = 32,
+        val_seq_len: int = 172,
         val_cfg_scale: float = 4.0,
         val_sampler: str = "heun",
         val_n_steps: int = 50,
@@ -66,6 +69,9 @@ class FlashDiTModule(L.LightningModule):
         loss = flow_matching_loss(self.model, x, y)
         self.log("train/loss", loss, on_step=True, on_epoch=False, prog_bar=True)
         return loss
+
+    def on_fit_start(self) -> None:
+        self.ema.ema_model.to(self.device)
 
     def on_train_batch_end(self, outputs, batch, batch_idx) -> None:
         self.ema.update(self.model)
@@ -94,9 +100,11 @@ class FlashDiTModule(L.LightningModule):
         from ..diffusion.samplers import euler_sample, heun_sample
 
         device = self.device
-        # Dummy genre labels: use class 0 for validation samples
-        y = torch.zeros(n, dtype=torch.long, device=device)
-        noise = torch.randn(n, self.model.in_channels, 64, device=device)
+        hp = self.hparams
+
+        # Rock (class 13) — largest FMA Medium class (35.9%), best-conditioned
+        y = torch.full((n,), 13, dtype=torch.long, device=device)
+        noise = torch.randn(n, self.model.in_channels, hp.val_seq_len, device=device)
 
         fn = heun_sample if sampler == "heun" else euler_sample
         with torch.no_grad():
@@ -104,11 +112,13 @@ class FlashDiTModule(L.LightningModule):
 
         # Decode to WAV if VAE decoder is available
         if hasattr(self, "vae"):
-            self._decode_and_save(latents, self.current_epoch)
+            wav_paths = self._decode_and_save(latents, self.current_epoch)
+            self._score_audiobox(wav_paths)
         else:
             warn("[val] VAE not attached to module — skipping WAV generation")
 
-    def _decode_and_save(self, latents: torch.Tensor, epoch: int) -> None:
+    def _decode_and_save(self, latents: torch.Tensor, epoch: int) -> list[Path]:
+        """Decode latents to WAV, save to disk, and return list of file paths."""
         import soundfile as sf
 
         out_dir = Path(self.hparams.output_dir) / f"epoch_{epoch:06d}"
@@ -120,15 +130,35 @@ class FlashDiTModule(L.LightningModule):
             std  = self.latent_std.to(latents)
             latents_raw = latents * (std[:, None] + 1e-6) + mean[:, None]
 
-            # AudioAutoencoder.decode_audio returns (audio, length)
-            audio, _ = self.vae.decode_audio(latents_raw)  # (B, 2, T_audio)
+            audio = self.vae.decode(latents_raw)  # (B, 2, T_audio)
 
         audio = audio.cpu().float().clamp(-1.0, 1.0).numpy()
+        paths = []
         for i, wav in enumerate(audio):
             path = out_dir / f"sample_{i:03d}.wav"
             sf.write(str(path), wav.T, samplerate=44100)
+            paths.append(path)
 
         ok(f"[val] saved {len(audio)} WAVs to {out_dir}")
+        return paths
+
+    def _score_audiobox(self, wav_paths: list[Path]) -> None:
+        """Score generated WAVs with Audiobox Aesthetics and log mean metrics."""
+        from ..evaluation.audiobox import score_wavs
+
+        try:
+            scores = score_wavs(wav_paths)
+        except Exception as exc:
+            warn(f"[val] Audiobox scoring failed: {exc}")
+            return
+
+        for key, val in scores.items():
+            self.log(f"val/audiobox_{key.lower()}", val, prog_bar=False, sync_dist=True)
+
+        ok(
+            f"[val] Audiobox — CE={scores['CE']:.3f}  CU={scores['CU']:.3f}  "
+            f"PC={scores['PC']:.3f}  PQ={scores['PQ']:.3f}"
+        )
 
     # ------------------------------------------------------------------
     # Optimizer & scheduler

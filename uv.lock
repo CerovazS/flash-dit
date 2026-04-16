@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 2
 requires-python = "==3.11.*"
 resolution-markers = [
     "sys_platform == 'linux'",
@@ -181,6 +181,25 @@ wheels = [
 ]
 
 [[package]]
+name = "audiobox-aesthetics"
+version = "0.0.4"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "huggingface-hub" },
+    { name = "numpy" },
+    { name = "rich" },
+    { name = "safetensors" },
+    { name = "submitit" },
+    { name = "torch" },
+    { name = "torchaudio" },
+    { name = "tqdm" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/e8/ea/85319f871d5bec87d679f203a21a0fd03a2662b34b379d3d68f2229c1bb3/audiobox_aesthetics-0.0.4.tar.gz", hash = "sha256:c010f7c6ecfb770d43da433b3e7bb53cd2aba61bc37007799ed2fd0262c100d1", size = 39686, upload-time = "2025-05-01T20:24:42.405Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/63/92/1b1264ad5e70a8e61427b6807c883bcfac14315b2c394ff4129a52c2e46d/audiobox_aesthetics-0.0.4-py3-none-any.whl", hash = "sha256:e9e596c2a6180e3cf3aa92013bfc838ba46b109603c1fc00c6ed7e3b4054291a", size = 38040, upload-time = "2025-05-01T20:24:40.647Z" },
+]
+
+[[package]]
 name = "audioread"
 version = "3.1.0"
 source = { registry = "https://pypi.org/simple" }
@@ -330,6 +349,15 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/98/26/85f9a52aedf8129b42a7416a3ec082c05822d9acd4f98bd7caaa811f657c/clip-anytorch-2.6.0.tar.gz", hash = "sha256:a827e4a64edbf72db01641b85ba88d37c4aff64ba3ffd4e3f7091a68e7e2badf", size = 1377219, upload-time = "2024-01-13T15:21:35.712Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/88/14/19d5ff584cb58f654d22d8d6552d7c2fff7b85e4a9d525357f62a4d1e7e0/clip_anytorch-2.6.0-py3-none-any.whl", hash = "sha256:ebc0afed243851b9dc7e16ab8afb665237e8a5838986e97cd99f123ae4ce94ce", size = 1372891, upload-time = "2024-01-13T15:21:33.903Z" },
+]
+
+[[package]]
+name = "cloudpickle"
+version = "3.1.2"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/27/fb/576f067976d320f5f0114a8d9fa1215425441bb35627b1993e5afd8111e5/cloudpickle-3.1.2.tar.gz", hash = "sha256:7fda9eb655c9c230dab534f1983763de5835249750e85fbcef43aaa30a9a2414", size = 22330, upload-time = "2025-11-03T09:25:26.604Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/88/39/799be3f2f0f38cc727ee3b4f1445fe6d5e4133064ec2e4115069418a5bb6/cloudpickle-3.1.2-py3-none-any.whl", hash = "sha256:9acb47f6afd73f60dc1df93bb801b472f05ff42fa6c84167d25cb206be1fbf4a", size = 22228, upload-time = "2025-11-03T09:25:25.534Z" },
 ]
 
 [[package]]
@@ -607,14 +635,15 @@ name = "flash-dit"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "audiobox-aesthetics" },
     { name = "einops" },
-    { name = "flash-attn" },
     { name = "frechet-audio-distance" },
     { name = "h5py" },
     { name = "huggingface-hub" },
     { name = "hydra-core" },
     { name = "laion-clap" },
     { name = "lightning" },
+    { name = "nvitop" },
     { name = "omegaconf" },
     { name = "pandas" },
     { name = "rich" },
@@ -626,6 +655,12 @@ dependencies = [
     { name = "torchaudio" },
     { name = "torchvision" },
     { name = "tqdm" },
+    { name = "wandb" },
+]
+
+[package.optional-dependencies]
+flash = [
+    { name = "flash-attn" },
 ]
 
 [package.dev-dependencies]
@@ -635,26 +670,30 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "audiobox-aesthetics", specifier = ">=0.0.4" },
     { name = "einops", specifier = ">=0.8" },
-    { name = "flash-attn", specifier = ">=2.8.3" },
+    { name = "flash-attn", marker = "extra == 'flash'", specifier = ">=2.8.3" },
     { name = "frechet-audio-distance", specifier = ">=0.0.6" },
     { name = "h5py", specifier = ">=3.10" },
     { name = "huggingface-hub", specifier = ">=0.23" },
     { name = "hydra-core", specifier = ">=1.3" },
     { name = "laion-clap" },
     { name = "lightning", specifier = ">=2.4" },
+    { name = "nvitop", specifier = ">=1.6.2" },
     { name = "omegaconf", specifier = ">=2.3" },
     { name = "pandas", specifier = ">=2.0" },
     { name = "rich", specifier = ">=13.0" },
     { name = "safetensors", specifier = ">=0.4" },
     { name = "setuptools", specifier = ">=68,<80" },
     { name = "soundfile", specifier = ">=0.12" },
-    { name = "stable-audio-tools", editable = "../stable-audio-tools" },
+    { name = "stable-audio-tools" },
     { name = "torch", index = "https://download.pytorch.org/whl/cu121" },
     { name = "torchaudio", index = "https://download.pytorch.org/whl/cu121" },
     { name = "torchvision", index = "https://download.pytorch.org/whl/cu121" },
     { name = "tqdm", specifier = ">=4.66" },
+    { name = "wandb" },
 ]
+provides-extras = ["flash"]
 
 [package.metadata.requires-dev]
 dev = [{ name = "pytest", specifier = ">=9.0.3" }]
@@ -1368,19 +1407,6 @@ wheels = [
 ]
 
 [[package]]
-name = "loguru"
-version = "0.7.3"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "colorama", marker = "sys_platform == 'win32'" },
-    { name = "win32-setctime", marker = "sys_platform == 'win32'" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/3a/05/a1dae3dffd1116099471c643b8924f5aa6524411dc6c63fdae648c4f1aca/loguru-0.7.3.tar.gz", hash = "sha256:19480589e77d47b8d85b2c827ad95d49bf31b0dcde16593892eb51dd18706eb6", size = 63559, upload-time = "2024-12-06T11:20:56.608Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/0c/29/0348de65b8cc732daa3e33e67806420b2ae89bdce2b04af740289c5c6c8c/loguru-0.7.3-py3-none-any.whl", hash = "sha256:31a33c10c8e1e10422bfd431aeb5d351c7cf7fa671e3c4df004162264b28220c", size = 61595, upload-time = "2024-12-06T11:20:54.538Z" },
-]
-
-[[package]]
 name = "markdown"
 version = "3.10.2"
 source = { registry = "https://pypi.org/simple" }
@@ -1655,6 +1681,15 @@ wheels = [
 ]
 
 [[package]]
+name = "nvidia-ml-py"
+version = "13.590.48"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/af/a0/f4fc18cf72f06821a9a665085435b901449986855519d5b3843532db35e9/nvidia_ml_py-13.590.48.tar.gz", hash = "sha256:8184d1be52914ac7f0991cd1c0d946c65dc88a840c754cd12c274b77b88760dd", size = 49732, upload-time = "2026-01-22T01:14:56.456Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/fd/72/fb2af0d259a651affdce65fd6a495f0e07a685a0136baf585c5065204ee7/nvidia_ml_py-13.590.48-py3-none-any.whl", hash = "sha256:fd43d30ee9cd0b7940f5f9f9220b68d42722975e3992b6c21d14144c48760e43", size = 50680, upload-time = "2026-01-22T01:14:55.281Z" },
+]
+
+[[package]]
 name = "nvidia-nccl-cu12"
 version = "2.21.5"
 source = { registry = "https://pypi.org/simple" }
@@ -1676,6 +1711,21 @@ version = "12.1.105"
 source = { registry = "https://pypi.org/simple" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/da/d3/8057f0587683ed2fcd4dbfbdfdfa807b9160b809976099d36b8f60d08f03/nvidia_nvtx_cu12-12.1.105-py3-none-manylinux1_x86_64.whl", hash = "sha256:dc21cf308ca5691e7c04d962e213f8a4aa9bbfa23d95412f452254c2caeb09e5", size = 99138, upload-time = "2023-04-19T15:48:43.556Z" },
+]
+
+[[package]]
+name = "nvitop"
+version = "1.6.2"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "colorama", marker = "sys_platform == 'win32'" },
+    { name = "nvidia-ml-py" },
+    { name = "psutil" },
+    { name = "windows-curses", marker = "sys_platform == 'win32'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/1b/bd/82f3bb53482cd078abc0d618098a2793c7c9caa7f26934051575397414e6/nvitop-1.6.2.tar.gz", hash = "sha256:267b341b66ac3819f116ad11819f4da2e121fe2be1dde979026b6526966211e9", size = 221935, upload-time = "2026-01-27T17:08:25.2Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/f7/c9/3f1fcb72597b51c96ff227d77bcacfb156571219a82f1b2714a853b0098d/nvitop-1.6.2-py3-none-any.whl", hash = "sha256:f3b8a0f4062108a953f5fbdd6042acd2041550d0b62d290b7e1d5c4e68d9a659", size = 215479, upload-time = "2026-01-27T17:08:22.721Z" },
 ]
 
 [[package]]
@@ -2501,7 +2551,7 @@ wheels = [
 [[package]]
 name = "stable-audio-tools"
 version = "0.0.19"
-source = { editable = "../stable-audio-tools" }
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "alias-free-torch" },
     { name = "auraloss" },
@@ -2516,19 +2566,12 @@ dependencies = [
     { name = "k-diffusion" },
     { name = "laion-clap" },
     { name = "local-attention" },
-    { name = "matplotlib" },
-    { name = "numpy" },
-    { name = "packaging" },
     { name = "pandas" },
-    { name = "pillow" },
     { name = "prefigure" },
     { name = "pytorch-lightning" },
     { name = "pywavelets" },
-    { name = "rich" },
     { name = "safetensors" },
-    { name = "scipy" },
     { name = "sentencepiece" },
-    { name = "tensorboard" },
     { name = "torch" },
     { name = "torchaudio" },
     { name = "torchmetrics" },
@@ -2538,47 +2581,10 @@ dependencies = [
     { name = "vector-quantize-pytorch" },
     { name = "wandb" },
     { name = "webdataset" },
-    { name = "x-transformers" },
 ]
-
-[package.metadata]
-requires-dist = [
-    { name = "alias-free-torch", specifier = "==0.0.6" },
-    { name = "auraloss", specifier = "==0.4.0" },
-    { name = "descript-audio-codec", specifier = "==1.0.0" },
-    { name = "einops" },
-    { name = "einops-exts" },
-    { name = "ema-pytorch", specifier = "==0.2.3" },
-    { name = "encodec", specifier = "==0.1.1" },
-    { name = "gradio", specifier = ">=5.20.0" },
-    { name = "huggingface-hub" },
-    { name = "importlib-resources", specifier = "==5.12.0" },
-    { name = "k-diffusion", specifier = "==0.1.1" },
-    { name = "laion-clap", specifier = "==1.1.4" },
-    { name = "local-attention", specifier = "==1.8.6" },
-    { name = "matplotlib" },
-    { name = "numpy" },
-    { name = "packaging" },
-    { name = "pandas", specifier = "==2.0.2" },
-    { name = "pillow" },
-    { name = "prefigure", specifier = "==0.0.9" },
-    { name = "pytorch-lightning", specifier = "==2.1.0" },
-    { name = "pywavelets", specifier = "==1.4.1" },
-    { name = "rich" },
-    { name = "safetensors" },
-    { name = "scipy" },
-    { name = "sentencepiece", specifier = "==0.1.99" },
-    { name = "tensorboard" },
-    { name = "torch", specifier = ">=2.5.1", index = "https://download.pytorch.org/whl/cu121" },
-    { name = "torchaudio", specifier = ">=2.5.1", index = "https://download.pytorch.org/whl/cu121" },
-    { name = "torchmetrics", specifier = "==0.11.4" },
-    { name = "tqdm" },
-    { name = "transformers" },
-    { name = "v-diffusion-pytorch", specifier = "==0.0.2" },
-    { name = "vector-quantize-pytorch", specifier = "==1.14.41" },
-    { name = "wandb", specifier = "==0.15.4" },
-    { name = "webdataset", specifier = "==0.2.100" },
-    { name = "x-transformers" },
+sdist = { url = "https://files.pythonhosted.org/packages/5c/51/3a8fbdb18d9d202b74e600d37b83a472f2bb56f52c90f531bccac79d7263/stable_audio_tools-0.0.19.tar.gz", hash = "sha256:36e6ebf15b0415c84a9372ccf3c358b1702b3abf8614d397dee3468895e47da5", size = 143604, upload-time = "2025-05-12T21:06:56.229Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/80/86/b1bfe6df9ee3036dec2315abcc1c8059cf5ccbcdce2e26cad9ff62636807/stable_audio_tools-0.0.19-py3-none-any.whl", hash = "sha256:c6b6f540d2bdabc4fc092246c77852f9a96a8ee8e430bbc117b174eb206dc6bd", size = 161034, upload-time = "2025-05-12T21:06:55.044Z" },
 ]
 
 [[package]]
@@ -2606,6 +2612,19 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/81/69/17425771797c36cded50b7fe44e850315d039f28b15901ab44839e70b593/starlette-1.0.0.tar.gz", hash = "sha256:6a4beaf1f81bb472fd19ea9b918b50dc3a77a6f2e190a12954b25e6ed5eea149", size = 2655289, upload-time = "2026-03-22T18:29:46.779Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/0b/c9/584bc9651441b4ba60cc4d557d8a547b5aff901af35bda3a4ee30c819b82/starlette-1.0.0-py3-none-any.whl", hash = "sha256:d3ec55e0bb321692d275455ddfd3df75fff145d009685eb40dc91fc66b03d38b", size = 72651, upload-time = "2026-03-22T18:29:45.111Z" },
+]
+
+[[package]]
+name = "submitit"
+version = "1.5.4"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "cloudpickle" },
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/47/86/497018fb3b74e71bef45df82762b176e6b3d159f29941c20d2f141ec4096/submitit-1.5.4.tar.gz", hash = "sha256:7100848bd1cdda79c7196e54ee830793ae75fd7adde0c5bef738d72360a07508", size = 81538, upload-time = "2025-12-17T19:20:03.396Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ea/bb/711e1c2ebd18a21202c972dd5d5c8e09a921f2d3560e3a53d6350c808ab7/submitit-1.5.4-py3-none-any.whl", hash = "sha256:c26f3a7c8d4150eaf70b1da71e2023e9e9936c93e8342ed7db910f29158561c5", size = 76043, upload-time = "2025-12-17T19:20:01.941Z" },
 ]
 
 [[package]]
@@ -2742,19 +2761,6 @@ dependencies = [
 wheels = [
     { url = "https://download-r2.pytorch.org/whl/cu121/torch-2.5.1%2Bcu121-cp311-cp311-linux_x86_64.whl", hash = "sha256:c8ab8c92eab928a93c483f83ca8c63f13dafc10fc93ad90ed2dcb7c82ea50410" },
     { url = "https://download-r2.pytorch.org/whl/cu121/torch-2.5.1%2Bcu121-cp311-cp311-win_amd64.whl", hash = "sha256:4bcee18f00c43c815efad8efaa3bca584ffdc8d2cd35ef4c44c814f2739d9191" },
-]
-
-[[package]]
-name = "torch-einops-utils"
-version = "0.0.30"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "einops" },
-    { name = "torch" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/f0/f8/7f6cd1a88ac32c8ca5216af6cfb9206468fa445cb85afb97986e60352160/torch_einops_utils-0.0.30.tar.gz", hash = "sha256:bb3b3b0c0fd183dbc8817256657d7dddc1969da462167d9dc84ff99e73fcb524", size = 9430, upload-time = "2026-02-20T13:03:53.826Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/92/5e/78ef01a3b65c13566ad39321db413c604085a9a92cd8879c50b0d90c587e/torch_einops_utils-0.0.30-py3-none-any.whl", hash = "sha256:334aa85b246aca580263cf85857031919835531356b58f938f197eb0a2a6dc08", size = 7238, upload-time = "2026-02-20T13:03:52.709Z" },
 ]
 
 [[package]]
@@ -3077,29 +3083,12 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/47/6a/62e288da7bcda82b935ff0c6cfe542970f04e29c756b0e147251b2fb251f/wget-3.2.zip", hash = "sha256:35e630eca2aa50ce998b9b1a127bb26b30dfee573702782aa982f875e3f16061", size = 10857, upload-time = "2015-10-22T15:26:37.51Z" }
 
 [[package]]
-name = "win32-setctime"
-version = "1.2.0"
+name = "windows-curses"
+version = "2.4.2"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/b3/8f/705086c9d734d3b663af0e9bb3d4de6578d08f46b1b101c2442fd9aecaa2/win32_setctime-1.2.0.tar.gz", hash = "sha256:ae1fdf948f5640aae05c511ade119313fb6a30d7eabe25fef9764dca5873c4c0", size = 4867, upload-time = "2024-12-07T15:28:28.314Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/e1/07/c6fe3ad3e685340704d314d765b7912993bcb8dc198f0e7a89382d37974b/win32_setctime-1.2.0-py3-none-any.whl", hash = "sha256:95d644c4e708aba81dc3704a116d8cbc974d70b3bdb8be1d150e36be6e9d1390", size = 4083, upload-time = "2024-12-07T15:28:26.465Z" },
-]
-
-[[package]]
-name = "x-transformers"
-version = "2.18.5"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "einops" },
-    { name = "einx" },
-    { name = "loguru" },
-    { name = "packaging" },
-    { name = "torch" },
-    { name = "torch-einops-utils" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/c8/60/6470bac4c2a27fdbd14bb349a48e93489990f83c8a0a0de845d4d9e1cb42/x_transformers-2.18.5.tar.gz", hash = "sha256:15a7281b657031067ea35ef7da89741ab6eba32763f0c2b0dd08c87f1896139e", size = 122660, upload-time = "2026-04-15T15:58:09.746Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/37/e5/c1953c1b7b8296825976bad3dfff10993a3913b315510c59b89227257ad9/x_transformers-2.18.5-py3-none-any.whl", hash = "sha256:b93807a639a2d041fadd290f14a7ad16c3fbb646a943205976004bfe1070c4d5", size = 106472, upload-time = "2026-04-15T15:58:07.765Z" },
+    { url = "https://files.pythonhosted.org/packages/d1/58/5fd430fec0ebe1cef88ddccba345ca119f1b44e58f58d6998878a01c9973/windows_curses-2.4.2-cp311-cp311-win32.whl", hash = "sha256:ecf7af9c97002af661d3e47b9c5eb31cdb7629a032adcdab46530efea8ba1864", size = 71135, upload-time = "2026-03-31T12:44:35.863Z" },
+    { url = "https://files.pythonhosted.org/packages/84/62/e2bae0ab9c5c80dca9a708a4cb9c8afaf0ef61c8d4459b57f96785040831/windows_curses-2.4.2-cp311-cp311-win_amd64.whl", hash = "sha256:03c4ef0095ab8212ed964236d51b4d8c815f302c5a7de94831dae468f05ce333", size = 81863, upload-time = "2026-03-31T12:44:36.834Z" },
 ]
 
 [[package]]

@@ -20,8 +20,10 @@ vae:
   cache_dir: /leonardo_scratch/fast/IscrC_LENS/lcerovaz/flash-dit-cache
 
 val:
-  generate_every_n_epochs: 5
-  n_samples: 16
+  generate_every_n_epochs: 4
+  n_samples: 32
+  # Latent frames to generate: floor(8 * 44100 / 2048) = 172 ≈ 8 s
+  seq_len: 172
   cfg_scale: 4.0
   sampler: heun
   n_steps: 50

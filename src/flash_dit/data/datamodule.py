@@ -21,15 +21,18 @@ class LatentDataModule(L.LightningDataModule):
         batch_size: int = 64,
         num_workers: int = 4,
         pin_memory: bool = True,
+        seq_len: int | None = None,
     ) -> None:
         super().__init__()
         self.h5_path = h5_path
         self.batch_size = batch_size
         self.num_workers = num_workers
         self.pin_memory = pin_memory
+        self.seq_len = seq_len
 
     def setup(self, stage: str | None = None) -> None:
-        self.train_ds = LatentDataset(self.h5_path, split="train")
+        # Random crop only on train; val/test use the full stored latent for consistency.
+        self.train_ds = LatentDataset(self.h5_path, split="train", seq_len=self.seq_len)
         self.val_ds   = LatentDataset(self.h5_path, split="val")
         self.test_ds  = LatentDataset(self.h5_path, split="test")
 

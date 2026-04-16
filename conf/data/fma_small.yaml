@@ -1,3 +1,4 @@
 h5_path: /leonardo_scratch/large/userexternal/lcerovaz/flash-dit-latents/stable_audio_open/fma_small.h5
 batch_size: 64
 num_workers: 8
+seq_len: 172

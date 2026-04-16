@@ -1,3 +1,7 @@
 h5_path: /leonardo_scratch/large/userexternal/lcerovaz/flash-dit-latents/stable_audio_open/fma_medium.h5
 batch_size: 64
 num_workers: 8
+# Random-crop each stored 215-frame latent (~10 s) to this many frames during training.
+# 172 × 2048 / 44100 ≈ 8 s. No padding — tracks shorter than seq_len are skipped at
+# precompute time, so every sample is guaranteed to be at least 215 frames.
+seq_len: 172

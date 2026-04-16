@@ -7,7 +7,7 @@ n_layers: 12
 n_heads: 12
 n_kv_heads: 12       # = n_heads → standard MHA, no KV compression
 mlp_mult: 2.667      # 8/3 — SwiGLU standard
-n_classes: 16
+n_classes: 17
 cfg_dropout: 0.1
 # Optimizations disabled
 attention_type: mha
