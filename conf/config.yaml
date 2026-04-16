@@ -20,10 +20,53 @@ vae:
   cache_dir: /leonardo_scratch/fast/IscrC_LENS/lcerovaz/flash-dit-cache
 
 val:
-  generate_every_n_epochs: 4
-  n_samples: 32
+  # Unified validation cadence. Every `generate_every_n_epochs` epochs the
+  # orchestrator in FlashDiTModule samples `n_samples` latents ONCE and
+  # feeds them to every enabled metric (latent_mmd, kad, audiobox).
+  generate_every_n_epochs: 8
+  n_samples: 128
   # Latent frames to generate: floor(8 * 44100 / 2048) = 172 ≈ 8 s
   seq_len: 172
   cfg_scale: 4.0
   sampler: heun
   n_steps: 50
+
+# Distribution-matching metrics evaluated during training.
+# Each metric inherits the sampling cadence of `val.generate_every_n_epochs`
+# by default. Override `every_n_epochs` per-metric to run less frequently
+# (e.g. KAD every 16 epochs while latent_mmd runs every 8).
+evaluation:
+  # Audiobox Aesthetics (CE/CU/PC/PQ) on decoded WAVs. Disabled by default —
+  # overlaps in signal with KAD and adds a few seconds per validation.
+  audiobox:
+    enabled: false
+    every_n_epochs: ${val.generate_every_n_epochs}
+
+  # Internal, VAE-decode-free metric over normalised latents.
+  # Consumes the same `val.n_samples` generated latents as every other metric.
+  latent_mmd:
+    enabled: true
+    every_n_epochs: ${val.generate_every_n_epochs}
+    n_reference: 1024
+    feature_types: [frame, clip_pooled]
+    frame_subsample_per_clip: 32
+    clip_pool_num_chunks: 4
+    kernel: gaussian
+    bandwidth_source: reference  # 'reference' | 'generated' | 'fixed'
+    bandwidth_subsample: 10000
+    scale_factor: 100
+    normalized: true
+    seed: 0
+    split: val
+    cache_dir: null             # defaults to ${output_dir}/.cache/latent_mmd
+
+  # External file-based KAD over decoded WAVs. Uses vendored PANNs backbone.
+  kad:
+    enabled: false
+    every_n_epochs: ${val.generate_every_n_epochs}
+    model_name: panns-wavegram-logmel
+    reference_dir: null         # required when kad.enabled=true
+    workers: 8
+    device: cuda
+    bandwidth_source: reference  # 'reference' | 'generated' | 'fixed'
+    scale_factor: 100
