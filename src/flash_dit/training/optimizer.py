@@ -1,7 +1,8 @@
 """Muon optimizer (inline Newton-Schulz) + AdamW hybrid builder.
 
-Muon is applied to all 2-D projection matrices in the transformer.
-AdamW handles scalar/vector parameters (embeddings, norms, biases, final head).
+Muon is applied only to hidden 2-D projection matrices inside transformer
+blocks. AdamW handles embeddings, norms, biases, AdaLN control tensors, final
+head, and other non-Muon parameters.
 
 Reference:
   Keller Jordan, "Muon: An optimizer for hidden layers in neural networks"
@@ -60,7 +61,7 @@ class Muon(torch.optim.Optimizer):
         return X.to(G.dtype)
 
     @torch.no_grad()
-    def step(self) -> None:  # type: ignore[override]
+    def step(self, closure=None) -> None:  # type: ignore[override]
         for group in self.param_groups:
             lr = group["lr"]
             momentum = group["momentum"]
@@ -85,12 +86,36 @@ class Muon(torch.optim.Optimizer):
 
                 if g.ndim == 2:
                     g_orth = self._newtonschulz5(g, ns_steps)
-                    # Scale so that effective step size is lr
-                    scale = float(max(g.size(0), g.size(1))) ** 0.5
+                    # Muon reference scale correction: rows > cols need larger
+                    # updates after orthogonalization; wide matrices do not.
+                    scale = float(max(1.0, g.size(0) / g.size(1))) ** 0.5
                     p.data.add_(g_orth, alpha=-lr * scale)
                 else:
                     # Fallback for non-2D params (should not reach here if split correctly)
                     p.data.add_(g, alpha=-lr)
+
+
+def _is_adamw_no_decay(name: str, p: torch.nn.Parameter) -> bool:
+    """Return True for params that should not receive AdamW weight decay."""
+    return p.ndim <= 1 or name.endswith(".bias") or "norm" in name or "embedding" in name
+
+
+def _is_muon_matrix_param(name: str, p: torch.nn.Parameter) -> bool:
+    """Return True for hidden projection matrices that are safe for Muon."""
+    if p.ndim != 2:
+        return False
+
+    muon_suffixes = (
+        ".attn.q_proj.weight",
+        ".attn.k_proj.weight",
+        ".attn.v_proj.weight",
+        ".attn.out_proj.weight",
+        ".attn.qkv.weight",
+        ".mlp.gate.weight",
+        ".mlp.up.weight",
+        ".mlp.down.weight",
+    )
+    return name.startswith("blocks.") and name.endswith(muon_suffixes)
 
 
 def build_optimizer(
@@ -114,7 +139,7 @@ def build_optimizer(
         for name, p in model.named_parameters():
             if not p.requires_grad:
                 continue
-            if p.ndim <= 1 or "embedding" in name:
+            if _is_adamw_no_decay(name, p):
                 no_decay.append(p)
             else:
                 decay.append(p)
@@ -124,17 +149,26 @@ def build_optimizer(
             lr=lr_adamw, betas=betas_adamw,
         )]
 
-    # Separate 2-D matrices (Muon) from everything else (AdamW)
-    muon_params, adamw_params = [], []
+    # Separate hidden projection matrices (Muon) from everything else (AdamW).
+    # In particular, keep embeddings, AdaLN-Zero control tensors, timestep MLPs,
+    # input/output projections, norms, and biases on AdamW.
+    muon_params, adamw_decay, adamw_no_decay = [], [], []
     for name, p in model.named_parameters():
         if not p.requires_grad:
             continue
-        if p.ndim == 2:
+        if _is_muon_matrix_param(name, p):
             muon_params.append(p)
+        elif _is_adamw_no_decay(name, p):
+            adamw_no_decay.append(p)
         else:
-            adamw_params.append(p)
+            adamw_decay.append(p)
 
     return [
         Muon(muon_params, lr=lr_muon, momentum=momentum, ns_steps=ns_steps, weight_decay=0.0),
-        AdamW(adamw_params, lr=lr_adamw, weight_decay=weight_decay, betas=betas_adamw),
+        AdamW(
+            [{"params": adamw_decay, "weight_decay": weight_decay},
+             {"params": adamw_no_decay, "weight_decay": 0.0}],
+            lr=lr_adamw,
+            betas=betas_adamw,
+        ),
     ]
