@@ -37,9 +37,13 @@ from flash_dit.utils.console import error, info, ok, warn
 # Constants
 # ---------------------------------------------------------------------------
 SAMPLE_RATE    = 44100
-CHUNK_SAMPLES  = 131072          # ≈ 3 s at 44.1 kHz
+# 215 × 2048 = 440320 samples = 9.985 s ≈ 10 s.
+# Chosen so that a standard 30 s FMA track yields exactly 3 non-overlapping chunks
+# (440320 × 3 = 1320960 < 1323000 = 30 s × 44100).
+# Next multiple up (216 × 2048 = 442368 = 10.03 s) would give only 2 chunks per track.
+CHUNK_SAMPLES  = 440320          # 9.985 s at 44.1 kHz
 VAE_STRIDE     = 2048            # temporal compression ratio of Oobleck
-LATENT_FRAMES  = CHUNK_SAMPLES // VAE_STRIDE   # = 64
+LATENT_FRAMES  = CHUNK_SAMPLES // VAE_STRIDE   # = 215
 LATENT_CHANNELS = 64
 
 HF_REPO   = "stabilityai/stable-audio-open-1.0"
