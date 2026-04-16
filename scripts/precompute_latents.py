@@ -144,11 +144,13 @@ def encode_chunk(vae, chunk: torch.Tensor) -> np.ndarray:
 
     stable-audio-tools AudioAutoencoder.encode returns (latents, info_dict).
     We use the distribution mean for deterministic, reproducible pre-computation.
+    Encoding runs in float32 (VAE weights are float32); output is cast to float16
+    only for compact HDF5 storage.
 
     Returns:
         (1, LATENT_CHANNELS, LATENT_FRAMES) float16 array.
     """
-    batch = chunk.unsqueeze(0).cuda().to(torch.bfloat16)  # (1, 2, T)
+    batch = chunk.unsqueeze(0).cuda().float()  # (1, 2, T) — float32, matches VAE weights
     result = vae.encode(batch)
     if isinstance(result, tuple):
         latents, info = result
