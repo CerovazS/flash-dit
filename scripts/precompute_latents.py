@@ -88,13 +88,15 @@ def load_vae(hf_token: str) -> torch.nn.Module:
 
     from safetensors.torch import load_file
     state = load_file(ckpt_path)
-    # Load only pretransform (VAE) weights to avoid OOM with the full DiT
+    # Load only pretransform (VAE) weights to avoid OOM with the full DiT.
+    # AutoencoderPretransform.load_state_dict delegates to self.model.load_state_dict,
+    # so keys must be relative to the inner autoencoder — strip "pretransform.model.".
     pretransform_state = {
-        k.removeprefix("pretransform."): v
+        k.removeprefix("pretransform.model."): v
         for k, v in state.items()
-        if k.startswith("pretransform.")
+        if k.startswith("pretransform.model.")
     }
-    model.pretransform.load_state_dict(pretransform_state, strict=False)
+    model.pretransform.load_state_dict(pretransform_state, strict=True)
 
     vae = model.pretransform.eval().cuda()
     # Disable per-sample iteration so the encoder processes the full batch on GPU.
