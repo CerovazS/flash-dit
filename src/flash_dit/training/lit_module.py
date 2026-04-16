@@ -114,6 +114,7 @@ class FlashDiTModule(L.LightningModule):
         if hasattr(self, "vae"):
             wav_paths = self._decode_and_save(latents, self.current_epoch)
             self._score_audiobox(wav_paths)
+            self._log_audio_to_wandb(wav_paths[:2])
         else:
             warn("[val] VAE not attached to module — skipping WAV generation")
 
@@ -141,6 +142,21 @@ class FlashDiTModule(L.LightningModule):
 
         ok(f"[val] saved {len(audio)} WAVs to {out_dir}")
         return paths
+
+    def _log_audio_to_wandb(self, wav_paths: list[Path]) -> None:
+        """Upload up to 2 WAVs to WandB as audio samples."""
+        import wandb
+
+        for logger in self.loggers:
+            experiment = getattr(logger, "experiment", None)
+            if experiment is None or not isinstance(experiment, wandb.sdk.wandb_run.Run):
+                continue
+            clips = [
+                wandb.Audio(str(p), sample_rate=44100, caption=f"epoch {self.current_epoch + 1} — {p.name}")
+                for p in wav_paths
+            ]
+            experiment.log({"val/audio": clips}, step=self.global_step)
+            break
 
     def _score_audiobox(self, wav_paths: list[Path]) -> None:
         """Score generated WAVs with Audiobox Aesthetics and log mean metrics."""
