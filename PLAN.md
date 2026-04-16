@@ -158,7 +158,7 @@ VAE checkpoint cached to `$FAST/flash-dit-cache/stable-audio-open/` to avoid re-
 
 **Output**: `/leonardo_scratch/large/userexternal/lcerovaz/flash-dit-latents/stable_audio_open/fma_medium.h5`
 
-**Estimated size**: ~17,000 tracks × 3 chunks/track × 64×215×2 bytes ≈ **~14 GB**
+**Estimated size**: ~17,000 tracks × 1 chunk/track × 64×215×2 bytes ≈ **~4.7 GB**
 
 **Note on stable-audio-open VAE**: the official checkpoint is a `DiffusionTransformer` with a
 `pretransform` (the Oobleck VAE). We use only `model.pretransform` for encoding/decoding latents.

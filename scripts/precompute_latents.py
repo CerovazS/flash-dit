@@ -105,16 +105,18 @@ def load_vae(hf_token: str) -> torch.nn.Module:
 # Audio processing
 # ---------------------------------------------------------------------------
 
-def load_audio_chunks(path: Path) -> list[torch.Tensor]:
-    """Load a track, resample to 44100 Hz stereo, chunk into CHUNK_SAMPLES frames.
+def load_audio_chunk(path: Path) -> torch.Tensor | None:
+    """Load a track and return a single CHUNK_SAMPLES-long stereo window.
 
-    Returns a list of (2, CHUNK_SAMPLES) float32 tensors.
+    Takes the first CHUNK_SAMPLES frames after a short intro offset (2s) to
+    skip typical silence/noise at the start of FMA tracks.
+    Returns None if the track is too short or cannot be loaded.
     """
     try:
         wav, sr = torchaudio.load(str(path))
     except Exception as exc:
         warn(f"Cannot load {path}: {exc}")
-        return []
+        return None
 
     if sr != SAMPLE_RATE:
         wav = torchaudio.functional.resample(wav, sr, SAMPLE_RATE)
@@ -125,40 +127,36 @@ def load_audio_chunks(path: Path) -> list[torch.Tensor]:
     elif wav.shape[0] > 2:
         wav = wav[:2]
 
-    # Split into non-overlapping chunks
-    n_chunks = wav.shape[1] // CHUNK_SAMPLES
-    chunks = []
-    for i in range(n_chunks):
-        chunk = wav[:, i * CHUNK_SAMPLES : (i + 1) * CHUNK_SAMPLES]
-        chunks.append(chunk)
-    return chunks
+    # Skip 2s intro, then take one CHUNK_SAMPLES window
+    offset = 2 * SAMPLE_RATE
+    if wav.shape[1] < offset + CHUNK_SAMPLES:
+        # Track too short: fall back to the beginning
+        offset = 0
+    if wav.shape[1] < CHUNK_SAMPLES:
+        return None
+
+    return wav[:, offset : offset + CHUNK_SAMPLES]  # (2, CHUNK_SAMPLES)
 
 
 @torch.no_grad()
-def encode_chunks(vae, chunks: list[torch.Tensor]) -> np.ndarray:
-    """Encode a list of audio chunks through the VAE encoder.
+def encode_chunk(vae, chunk: torch.Tensor) -> np.ndarray:
+    """Encode a single (2, CHUNK_SAMPLES) audio tensor through the VAE encoder.
 
     stable-audio-tools AudioAutoencoder.encode returns (latents, info_dict).
-    We take the mean from the VAE distribution (deterministic for pre-computation).
+    We use the distribution mean for deterministic, reproducible pre-computation.
 
     Returns:
-        (len(chunks), LATENT_CHANNELS, LATENT_FRAMES) float16 array.
+        (1, LATENT_CHANNELS, LATENT_FRAMES) float16 array.
     """
-    out = []
-    for i in range(0, len(chunks), BATCH_SIZE):
-        batch = torch.stack(chunks[i : i + BATCH_SIZE]).cuda().to(torch.bfloat16)
-        result = vae.encode(batch)
-        # stable-audio-tools returns (latent, info) or just latent depending on bottleneck
-        if isinstance(result, tuple):
-            latents, info = result
-            # For VAE bottleneck, prefer mean over sampled latent
-            if isinstance(info, dict) and "mean" in info:
-                latents = info["mean"]
-        else:
-            latents = result
-        latents = latents.float().cpu().numpy().astype(np.float16)
-        out.append(latents)
-    return np.concatenate(out, axis=0)
+    batch = chunk.unsqueeze(0).cuda().to(torch.bfloat16)  # (1, 2, T)
+    result = vae.encode(batch)
+    if isinstance(result, tuple):
+        latents, info = result
+        if isinstance(info, dict) and "mean" in info:
+            latents = info["mean"]
+    else:
+        latents = result
+    return latents.float().cpu().numpy().astype(np.float16)  # (1, C, T_lat)
 
 
 # ---------------------------------------------------------------------------
@@ -246,21 +244,20 @@ def main(dry_run: bool = False) -> None:
 
         written = 0
         for sp, genre_id, path in tqdm(tracks, desc="encoding"):
-            chunks = load_audio_chunks(path)
-            if not chunks:
+            chunk = load_audio_chunk(path)
+            if chunk is None:
                 continue
 
-            latents = encode_chunks(vae, chunks)  # (K, C, T)
-            K = latents.shape[0]
+            latents = encode_chunk(vae, chunk)  # (1, C, T_lat)
 
             for ds in (ds_lat, ds_gen, ds_tid, ds_spl):
-                ds.resize(written + K, axis=0)
+                ds.resize(written + 1, axis=0)
 
-            ds_lat[written : written + K] = latents
-            ds_gen[written : written + K] = np.full(K, genre_id, dtype=np.int64)
-            ds_tid[written : written + K] = [path.stem] * K
-            ds_spl[written : written + K] = [sp.encode()] * K
-            written += K
+            ds_lat[written] = latents[0]
+            ds_gen[written] = genre_id
+            ds_tid[written] = path.stem
+            ds_spl[written] = sp.encode()
+            written += 1
 
         ok(f"Wrote {written} latent chunks.")
 
