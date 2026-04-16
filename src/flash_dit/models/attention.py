@@ -19,9 +19,46 @@ except ImportError:
     _HAS_FA3 = False
 
 
-def _sdpa(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, dropout_p: float) -> torch.Tensor:
+def _fa2_runnable(device: torch.device) -> bool:
+    """FA2 kernel requires Ampere (sm_80) or newer. Cache by device index.
+
+    Without this check, running on Turing (sm_75 — e.g. 2080 Ti) or Volta
+    raises ``RuntimeError: FlashAttention only supports Ampere GPUs or newer``
+    at the first kernel call — including DDP jobs that span heterogeneous GPUs.
+    """
+    if not _HAS_FA2 or device.type != "cuda":
+        return False
+    major, _ = torch.cuda.get_device_capability(device)
+    return major >= 8
+
+
+def _fa3_runnable(device: torch.device) -> bool:
+    """FA3 kernel requires Hopper (sm_90)."""
+    if not _HAS_FA3 or device.type != "cuda":
+        return False
+    major, _ = torch.cuda.get_device_capability(device)
+    return major >= 9
+
+
+def _sdpa(
+    q: torch.Tensor,
+    k: torch.Tensor,
+    v: torch.Tensor,
+    dropout_p: float,
+    enable_gqa: bool = False,
+) -> torch.Tensor:
     """SDPA fallback: q/k/v in (B, H, T, D) layout → returns (B, T, H*D)."""
-    out = F.scaled_dot_product_attention(q, k, v, dropout_p=dropout_p)
+    if not enable_gqa:
+        out = F.scaled_dot_product_attention(q, k, v, dropout_p=dropout_p)
+        return rearrange(out, "b h t d -> b t (h d)")
+
+    try:
+        out = F.scaled_dot_product_attention(q, k, v, dropout_p=dropout_p, enable_gqa=True)
+    except TypeError:
+        n_groups = q.size(1) // k.size(1)
+        k = k.repeat_interleave(n_groups, dim=1)
+        v = v.repeat_interleave(n_groups, dim=1)
+        out = F.scaled_dot_product_attention(q, k, v, dropout_p=dropout_p)
     return rearrange(out, "b h t d -> b t (h d)")
 
 
@@ -60,7 +97,8 @@ class MultiHeadAttention(nn.Module):
 
         dp = self.dropout if self.training else 0.0
 
-        if _HAS_FA2:
+        # FA2 is a CUDA-only Ampere+ kernel; tests and older GPUs fall back.
+        if _fa2_runnable(q.device):
             out = flash_attn_func(q, k, v, dropout_p=dp)
             out = rearrange(out, "b t h d -> b t (h d)")
         else:
@@ -117,20 +155,22 @@ class GroupedQueryAttention(nn.Module):
 
         dp = self.dropout if self.training else 0.0
 
-        if self.use_fa3 and _HAS_FA3:
+        if self.use_fa3 and _fa3_runnable(q.device):
             # FA3 natively supports GQA: pass q (B,T,H,D) and k/v (B,T,Hkv,D) directly
             out = fa3_func(q.contiguous(), k.contiguous(), v.contiguous())
             out = rearrange(out, "b t h d -> b t (h d)")
-        elif _HAS_FA2:
-            # FA2: expand kv to match query head count
-            k_exp = k.repeat_interleave(self.n_groups, dim=2)
-            v_exp = v.repeat_interleave(self.n_groups, dim=2)
-            out = flash_attn_func(q, k_exp, v_exp, dropout_p=dp)
+        elif _fa2_runnable(q.device):
+            # FA2 supports GQA/MQA directly: Hq must be divisible by Hkv.
+            out = flash_attn_func(q, k, v, dropout_p=dp)
             out = rearrange(out, "b t h d -> b t (h d)")
         else:
-            k_exp = rearrange(k, "b t h d -> b h t d").repeat_interleave(self.n_groups, dim=1)
-            v_exp = rearrange(v, "b t h d -> b h t d").repeat_interleave(self.n_groups, dim=1)
-            out = _sdpa(rearrange(q, "b t h d -> b h t d"), k_exp, v_exp, dp)
+            out = _sdpa(
+                rearrange(q, "b t h d -> b h t d"),
+                rearrange(k, "b t h d -> b h t d"),
+                rearrange(v, "b t h d -> b h t d"),
+                dp,
+                enable_gqa=self.n_groups > 1,
+            )
 
         return self.out_proj(out)
 

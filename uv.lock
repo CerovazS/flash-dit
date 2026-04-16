@@ -623,12 +623,20 @@ wheels = [
 [[package]]
 name = "flash-attn"
 version = "2.8.3"
-source = { registry = "https://pypi.org/simple" }
+source = { url = "https://github.com/Dao-AILab/flash-attention/releases/download/v2.8.3/flash_attn-2.8.3+cu12torch2.5cxx11abiFALSE-cp311-cp311-linux_x86_64.whl" }
 dependencies = [
     { name = "einops" },
     { name = "torch" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/3b/b2/8d76c41ad7974ee264754709c22963447f7f8134613fd9ce80984ed0dab7/flash_attn-2.8.3.tar.gz", hash = "sha256:1e71dd64a9e0280e0447b8a0c2541bad4bf6ac65bdeaa2f90e51a9e57de0370d", size = 8447812, upload-time = "2025-08-15T08:28:12.911Z" }
+wheels = [
+    { url = "https://github.com/Dao-AILab/flash-attention/releases/download/v2.8.3/flash_attn-2.8.3+cu12torch2.5cxx11abiFALSE-cp311-cp311-linux_x86_64.whl", hash = "sha256:ca5a5614530bad3bcaf936917d53a6d60c9057d1218030efe3ca588cb4f4ebb6" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "einops" },
+    { name = "torch" },
+]
 
 [[package]]
 name = "flash-dit"
@@ -672,7 +680,7 @@ dev = [
 requires-dist = [
     { name = "audiobox-aesthetics", specifier = ">=0.0.4" },
     { name = "einops", specifier = ">=0.8" },
-    { name = "flash-attn", marker = "extra == 'flash'", specifier = ">=2.8.3" },
+    { name = "flash-attn", marker = "extra == 'flash'", url = "https://github.com/Dao-AILab/flash-attention/releases/download/v2.8.3/flash_attn-2.8.3+cu12torch2.5cxx11abiFALSE-cp311-cp311-linux_x86_64.whl" },
     { name = "frechet-audio-distance", specifier = ">=0.0.6" },
     { name = "h5py", specifier = ">=3.10" },
     { name = "huggingface-hub", specifier = ">=0.23" },

@@ -46,6 +46,13 @@ explicit = true
 torch = { index = "pytorch" }
 torchvision = { index = "pytorch" }
 torchaudio = { index = "pytorch" }
+# Prebuilt FA2 wheel for torch 2.5 / cu12 / py311 / cxx11abi=FALSE.
+# Avoids the local-build path that needs nvcc + CUDA_HOME, which are not
+# available in most lightweight dev shells.
+# Primary (remote): github release for flash-attn 2.8.3.
+# Fallback (local): /tmp/fa_wheel/flash_attn.whl — downloaded once when
+# the github download flakes (connection resets on the 245 MB asset).
+flash-attn = { url = "https://github.com/Dao-AILab/flash-attention/releases/download/v2.8.3/flash_attn-2.8.3+cu12torch2.5cxx11abiFALSE-cp311-cp311-linux_x86_64.whl" }
 
 [build-system]
 requires = ["setuptools>=68", "wheel"]
