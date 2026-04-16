@@ -153,7 +153,7 @@ class FlashDiTModule(L.LightningModule):
             wandb.Audio(str(p), sample_rate=44100, caption=f"epoch {self.current_epoch + 1} — {p.name}")
             for p in wav_paths
         ]
-        wandb.log({"val/audio": clips})
+        wandb.log({"val/audio": clips}, commit=True)
 
     def _score_audiobox(self, wav_paths: list[Path]) -> None:
         """Score generated WAVs with Audiobox Aesthetics and log mean metrics."""
