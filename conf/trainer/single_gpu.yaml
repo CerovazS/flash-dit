@@ -1,7 +1,6 @@
 devices: 1
 strategy: auto
 precision: bf16-mixed
-max_epochs: 300
-gradient_clip_val: 1.0
+max_epochs: 1000
 check_val_every_n_epoch: 4
 num_sanity_val_steps: 1
