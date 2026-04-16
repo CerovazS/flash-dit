@@ -151,7 +151,7 @@ class DiffusionTransformer(nn.Module):
 
         if use_compile:
             self.blocks = nn.ModuleList(
-                [torch.compile(b, mode="reduce-overhead") for b in self.blocks]
+                [torch.compile(b, mode="default") for b in self.blocks]
             )
 
         self._init_weights()
