@@ -110,7 +110,7 @@ def main(cfg: DictConfig) -> None:
             entity="ar_spectra",
             project="flash_dit",
             name=cfg.run_name,
-            save_dir=cfg.output_dir,
+            save_dir=".",
             config=dict(OmegaConf.to_container(cfg, resolve=True)),
         )
         wandb_logger.watch(lit.model, log="gradients", log_freq=500)
