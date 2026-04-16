@@ -1,0 +1,13 @@
+# Hydra multirun profile: scan batch_size to find peak throughput and OOM ceiling.
+# Launch with:  uv run python scripts/bench.py -m bench=batch_scaling
+defaults:
+  - throughput
+  - _self_
+
+measure_steps: 30              # keep each job short; we're scanning many B values
+
+hydra:
+  mode: MULTIRUN
+  sweeper:
+    params:
+      bench.batch_size: 8,16,32,64,128,192,256

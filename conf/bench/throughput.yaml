@@ -1,0 +1,13 @@
+# Full training-step throughput profile: forward + backward + optimizer.step()
+# on a DiffusionTransformer with synthetic (B, C, T) input.
+mode: throughput_step          # throughput_step | microbench_attention | microbench_mlp | microbench_block
+warmup_steps: 10               # absorbs torch.compile build + cuDNN autotune
+measure_steps: 50              # steps per repeat used for timing
+repeats: 3                     # re-runs the measurement; std reflects cross-repeat variance
+batch_size: 32
+seq_len: 172                   # matches floor(8 s * 44100 / 2048) — Stable Audio VAE default window
+in_channels: 64                # VAE latent channel count
+n_classes: 17                  # FMA-medium genres (16) + CFG null token
+include_optimizer: true
+include_backward: true
+precision: bf16                # bf16 | fp16 | fp32 ; applied via torch.autocast on CUDA only

@@ -1,0 +1,19 @@
+# Root config for scripts/bench.py (independent from conf/config.yaml
+# used by scripts/train.py — we do NOT want to pull in data/diffusion/val/
+# evaluation since the bench runs on synthetic data without Lightning).
+defaults:
+  - bench: throughput          # default profile; override with `bench=batch_scaling` etc.
+  - model: flash_dit           # reuse existing model group verbatim
+  - optimizer: adamw           # only consulted when bench.include_optimizer=true
+  - _self_
+
+run_name: ${bench.mode}_${model.name}_${now:%Y%m%d_%H%M%S}
+output_dir: outputs/bench/${run_name}
+seed: 42
+
+hydra:
+  run:
+    dir: ${output_dir}
+  sweep:
+    dir: outputs/bench/sweeps/${now:%Y%m%d_%H%M%S}_${bench.mode}
+    subdir: ${hydra.job.num}_${model.name}_B${bench.batch_size}_T${bench.seq_len}

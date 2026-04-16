@@ -1,0 +1,14 @@
+# Hydra multirun profile: throughput across model × batch_size.
+# Launch with:  uv run python scripts/bench.py -m bench=attention_sweep
+defaults:
+  - throughput
+  - _self_
+
+# Model / batch matrix lives in hydra.sweeper.params at the root config level;
+# when `bench=attention_sweep` is used alongside `-m`, Hydra will expand it.
+hydra:
+  mode: MULTIRUN
+  sweeper:
+    params:
+      model: flash_dit,vanilla_sit
+      bench.batch_size: 32,64,128

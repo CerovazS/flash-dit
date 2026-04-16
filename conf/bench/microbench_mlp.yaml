@@ -1,0 +1,9 @@
+# Microbenchmark: isolated MLP module (SwiGLU / ReLU² per model config).
+defaults:
+  - throughput
+  - _self_
+
+mode: microbench_mlp
+warmup_steps: 50
+measure_steps: 500
+include_optimizer: false

@@ -1,0 +1,11 @@
+# Microbenchmark: isolated attention module. Bypasses DiT's x_embedder,
+# timestep/genre conditioning, final_layer — measures only the attention
+# module (q/k/v proj + RoPE + attention kernel + out_proj).
+defaults:
+  - throughput
+  - _self_
+
+mode: microbench_attention
+warmup_steps: 50               # kernel is tiny; warmup more to stabilise cuDNN heuristics
+measure_steps: 500
+include_optimizer: false       # no parameters to step in a kernel bench

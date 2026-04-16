@@ -1,0 +1,10 @@
+# Microbenchmark: full DiTBlock (norms + attention + MLP + AdaLN modulation).
+# Useful mid-point between kernel-only and full-model benchmarks.
+defaults:
+  - throughput
+  - _self_
+
+mode: microbench_block
+warmup_steps: 20
+measure_steps: 200
+include_optimizer: false
