@@ -1,4 +1,6 @@
 """Attention variants: MHA and GQA, with FA2/FA3/SDPA backends."""
+import os
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -25,8 +27,14 @@ def _fa2_runnable(device: torch.device) -> bool:
     Without this check, running on Turing (sm_75 — e.g. 2080 Ti) or Volta
     raises ``RuntimeError: FlashAttention only supports Ampere GPUs or newer``
     at the first kernel call — including DDP jobs that span heterogeneous GPUs.
+
+    Set ``FLASH_DIT_DISABLE_FA2=1`` in the environment to force the SDPA
+    fallback even when FA2 is importable and the hardware supports it —
+    useful for ablation benchmarks that isolate the FA2 contribution.
     """
     if not _HAS_FA2 or device.type != "cuda":
+        return False
+    if os.environ.get("FLASH_DIT_DISABLE_FA2", "0") == "1":
         return False
     major, _ = torch.cuda.get_device_capability(device)
     return major >= 8
