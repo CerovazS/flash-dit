@@ -32,3 +32,7 @@ multirun/
 .idea/
 wandb/
 runs/
+
+# Local working notes — not part of the public repo
+TODO.md
+program.md
