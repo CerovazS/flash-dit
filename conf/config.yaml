@@ -23,6 +23,9 @@ val:
   # Unified validation cadence. Every `generate_every_n_epochs` epochs the
   # orchestrator in FlashDiTModule samples `n_samples` latents ONCE and
   # feeds them to every enabled metric (latent_mmd, kad, audiobox).
+  # MSE (val/loss) fires at every val-loop tick governed by
+  # `trainer.check_val_every_n_epoch`, so pick that value as the MSE cadence
+  # and set `generate_every_n_epochs` to a multiple of it.
   generate_every_n_epochs: 8
   n_samples: 128
   # Latent frames to generate: floor(8 * 44100 / 2048) = 172 ≈ 8 s
@@ -30,6 +33,10 @@ val:
   cfg_scale: 4.0
   sampler: heun
   n_steps: 50
+  # Local WAVs to keep per validation after metrics + WandB upload; the rest
+  # are deleted along with the per-epoch embedding/convert caches to prevent
+  # unbounded growth. 2 matches the WandB audio-table size.
+  keep_n_wavs: 2
 
 # Distribution-matching metrics evaluated during training.
 # Each metric inherits the sampling cadence of `val.generate_every_n_epochs`
@@ -61,12 +68,21 @@ evaluation:
     cache_dir: null             # defaults to ${output_dir}/.cache/latent_mmd
 
   # External file-based KAD over decoded WAVs. Uses vendored PANNs backbone.
+  #
+  # Reference audio is supplied in exactly one of two ways:
+  #   - reference_dir: a directory of audio files (embeddings cached in-place).
+  #   - reference_manifest: a .txt with one absolute audio path per line. Use
+  #     this to point at an existing dataset tree (e.g. FMA test split) built
+  #     by scripts/build_kad_reference.py. Cache is redirected to
+  #     reference_cache_dir (defaults to <manifest>.kad_cache/).
   kad:
-    enabled: false
+    enabled: true
     every_n_epochs: ${val.generate_every_n_epochs}
     model_name: panns-wavegram-logmel
-    reference_dir: null         # required when kad.enabled=true
+    reference_dir: null              # dir-mode reference (set this OR manifest)
+    reference_manifest: null         # manifest-mode reference (set this OR dir)
+    reference_cache_dir: null        # cache dir for manifest mode (optional)
     workers: 8
     device: cuda
-    bandwidth_source: reference  # 'reference' | 'generated' | 'fixed'
+    bandwidth_source: reference      # 'reference' | 'generated' | 'fixed'
     scale_factor: 100

@@ -80,6 +80,7 @@ def main(cfg: DictConfig) -> None:
         val_cfg_scale=cfg.val.cfg_scale,
         val_sampler=cfg.val.sampler,
         val_n_steps=cfg.val.n_steps,
+        val_keep_n_wavs=cfg.val.get("keep_n_wavs", 2),
         output_dir=os.path.join(cfg.output_dir, "generated"),
         metrics_dir=os.path.join(cfg.output_dir, "metrics"),
         evaluation_cfg=evaluation_cfg,

@@ -15,9 +15,17 @@ Cache layout is kept identical to upstream so caches are interchangeable:
 
     <audio_dir>/convert/<sr>/<stem>.wav       # resampled mono @ model sr
     <audio_dir>/embeddings/<model_name>/<stem>.npy
+
+A ``cache_root`` override is available on :class:`EmbeddingLoader` and on
+:func:`cache_embedding_files`. When set, resampled WAVs and embedding ``.npy``
+files go under a dedicated directory instead of next to the source audio.
+This is used by the manifest-based reference path in
+:func:`flash_dit.evaluation.kad.compute_kad` so that scattered reference
+audio (e.g. the FMA ``000/``, ``001/``, … tree) shares one cache location.
 """
 from __future__ import annotations
 
+import multiprocessing as _mp
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 from typing import Union
@@ -36,8 +44,14 @@ _AUDIO_EXTS = {".wav", ".flac", ".mp3", ".ogg", ".m4a", ".aac"}
 class EmbeddingLoader:
     """Extract embeddings for audio files, with on-disk caching."""
 
-    def __init__(self, model: ModelLoader, load_model: bool = True) -> None:
+    def __init__(
+        self,
+        model: ModelLoader,
+        load_model: bool = True,
+        cache_root: PathLike | None = None,
+    ) -> None:
         self.ml = model
+        self.cache_root = Path(cache_root) if cache_root is not None else None
         if load_model:
             self.ml.load_model()
             self.loaded = True
@@ -45,7 +59,8 @@ class EmbeddingLoader:
     def load_audio(self, f: PathLike) -> np.ndarray:
         """Resample ``f`` to mono @ model sample rate, cache the resampled WAV."""
         f = Path(f)
-        cache_dir = f.parent / "convert" / str(self.ml.sr)
+        convert_root = self.cache_root if self.cache_root is not None else f.parent
+        cache_dir = convert_root / "convert" / str(self.ml.sr)
         new = (cache_dir / f.name).with_suffix(".wav")
         if not new.exists():
             cache_dir.mkdir(parents=True, exist_ok=True)
@@ -68,14 +83,14 @@ class EmbeddingLoader:
         return self.ml.load_wav(new)
 
     def read_embedding_file(self, audio_path: PathLike) -> np.ndarray:
-        cache = get_cache_embedding_path(self.ml.name, audio_path)
+        cache = get_cache_embedding_path(self.ml.name, audio_path, self.cache_root)
         if not cache.exists():
             raise FileNotFoundError(f"Embedding cache missing: {cache}")
         return np.load(cache)
 
     def cache_embedding_file(self, audio_path: PathLike) -> Path:
         """Compute + cache the embedding for one file, return the cache path."""
-        cache = get_cache_embedding_path(self.ml.name, audio_path)
+        cache = get_cache_embedding_path(self.ml.name, audio_path, self.cache_root)
         if cache.exists():
             return cache
         wav = self.load_audio(audio_path)
@@ -117,13 +132,25 @@ def _collect_audio_files(audio_dir: PathLike) -> list[Path]:
     return sorted(p for p in d.glob("*") if p.suffix.lower() in _AUDIO_EXTS)
 
 
-def _cache_batch_worker(args: tuple[list[Path], ModelLoader]) -> int:
-    files, ml = args
-    loader = EmbeddingLoader(ml, load_model=True)
+def _cache_batch_worker(
+    args: tuple[list[Path], ModelLoader, Path | None],
+) -> int:
+    files, ml, cache_root = args
+    loader = EmbeddingLoader(ml, load_model=True, cache_root=cache_root)
     n = 0
     for f in files:
-        loader.cache_embedding_file(f)
-        n += 1
+        # Per-file try/except: a single corrupt/unreadable audio (FFmpeg
+        # "Invalid argument", truncated mp3, unusual codec, etc.) otherwise
+        # crashes the worker process and aborts the whole ProcessPoolExecutor
+        # batch, losing all not-yet-started files in that partition. Skipping
+        # is the right default for reference caches — the MMD still has plenty
+        # of embeddings, and the bad file is reported via stderr.
+        try:
+            loader.cache_embedding_file(f)
+            n += 1
+        except Exception as exc:
+            import sys
+            print(f"[emb_loader] skipping {f}: {exc}", file=sys.stderr, flush=True)
     return n
 
 
@@ -132,6 +159,7 @@ def cache_embedding_files(
     ml: ModelLoader,
     workers: int = 8,
     force_emb_encode: bool = False,
+    cache_root: PathLike | None = None,
 ) -> int:
     """Populate the embedding cache for every audio file under ``files_or_dir``.
 
@@ -140,9 +168,16 @@ def cache_embedding_files(
     uses a ``ProcessPoolExecutor`` so each worker can hold the pretrained
     model in its own GPU memory.
 
+    When ``cache_root`` is given, all resampled WAVs and ``.npy`` caches go
+    under ``<cache_root>/convert/<sr>/…`` and ``<cache_root>/embeddings/<model>/…``
+    instead of next to the source audio. This is used by the manifest-based
+    reference flow so scattered audio files share one cache directory.
+
     Returns the number of files that were (re)cached this call.
     """
     import shutil
+
+    cache_root_p = Path(cache_root) if cache_root is not None else None
 
     files = (
         list(_collect_audio_files(files_or_dir))
@@ -153,20 +188,34 @@ def cache_embedding_files(
         return 0
 
     if force_emb_encode:
-        emb_root = files[0].parent / "embeddings" / ml.name
+        emb_root = (
+            cache_root_p / "embeddings" / ml.name
+            if cache_root_p is not None
+            else files[0].parent / "embeddings" / ml.name
+        )
         if emb_root.exists():
             shutil.rmtree(emb_root)
 
-    to_encode = [f for f in files if not get_cache_embedding_path(ml.name, f).exists()]
+    to_encode = [
+        f for f in files
+        if not get_cache_embedding_path(ml.name, f, cache_root_p).exists()
+    ]
     if not to_encode:
         return 0
 
     if workers <= 1:
-        return _cache_batch_worker((to_encode, ml))
+        return _cache_batch_worker((to_encode, ml, cache_root_p))
 
     batches = [list(b) for b in np.array_split(to_encode, workers) if len(b) > 0]
     done = 0
-    with ProcessPoolExecutor(max_workers=workers) as pool:
-        for n in pool.map(_cache_batch_worker, [(b, ml) for b in batches]):
+    # Use 'spawn' — each worker loads PANNs on CUDA, and fork poisons any
+    # CUDA context the parent may have already touched (training path) or
+    # re-initialises (fresh CLI path), failing with
+    # "Cannot re-initialize CUDA in forked subprocess".
+    ctx = _mp.get_context("spawn")
+    with ProcessPoolExecutor(max_workers=workers, mp_context=ctx) as pool:
+        for n in pool.map(
+            _cache_batch_worker, [(b, ml, cache_root_p) for b in batches]
+        ):
             done += n
     return done

@@ -11,15 +11,30 @@ from typing import Union
 PathLike = Union[str, Path]
 
 
-def get_cache_embedding_path(model: str, audio_dir: PathLike) -> Path:
+def get_cache_embedding_path(
+    model: str,
+    audio_dir: PathLike,
+    cache_root: PathLike | None = None,
+) -> Path:
     """Return the canonical .npy cache path for an audio file's embedding.
 
-    Mirrors the upstream kadtk layout: ``<audio_parent>/embeddings/<model>/<stem>.npy``.
-    Keeping the same layout means we can mix files produced by upstream kadtk
-    and by this vendored copy in the same tree without re-extracting.
+    When ``cache_root`` is ``None`` (default), mirrors the upstream kadtk
+    layout: ``<audio_parent>/embeddings/<model>/<stem>.npy`` — so caches stay
+    next to the audio tree and are interchangeable with upstream kadtk.
+
+    When ``cache_root`` is given, caches are redirected to
+    ``<cache_root>/embeddings/<model>/<stem>.npy``. This is used by the
+    manifest-based reference path in :func:`flash_dit.evaluation.kad.compute_kad`
+    so that scattered audio files (e.g. FMA's ``000/``, ``001/``, … tree)
+    share a single cache directory instead of polluting each subfolder.
+
+    Note: stems must be unique across all audio files that share the same
+    ``cache_root``, otherwise caches would collide. FMA track IDs are globally
+    unique (six-digit), so this holds for the FMA reference flow.
     """
     p = Path(audio_dir)
-    return p.parent / "embeddings" / model / p.with_suffix(".npy").name
+    root = Path(cache_root) if cache_root is not None else p.parent
+    return root / "embeddings" / model / p.with_suffix(".npy").name
 
 
 def download_file(url: str, dest: PathLike, chunk: int = 1 << 20) -> Path:

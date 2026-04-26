@@ -60,6 +60,7 @@ class FlashDiTModule(L.LightningModule):
         val_cfg_scale: float = 4.0,
         val_sampler: str = "heun",
         val_n_steps: int = 50,
+        val_keep_n_wavs: int = 2,
         output_dir: str = "outputs",
         metrics_dir: str | None = None,
         evaluation_cfg: dict | None = None,
@@ -183,9 +184,17 @@ class FlashDiTModule(L.LightningModule):
         if wav_paths and due_audiobox:
             self._score_audiobox(wav_paths)
         if wav_paths and due_kad:
+            # Free cached sampler/VAE activations before spawning PANNs workers.
+            # Without this, the parent process's allocator reservations prevent
+            # the spawn subprocesses from claiming GPU memory — OOM when the
+            # main model has a large cache footprint (e.g. MHA / no torch.compile).
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
             self._compute_kad(wav_paths[0].parent, kad_cfg)
         if wav_paths and due_wandb:
             self._log_audio_to_wandb(wav_paths[:2])
+        if wav_paths:
+            self._cleanup_generated_dir(wav_paths, keep_n=int(hp.val_keep_n_wavs))
 
     # ------------------------------------------------------------------
     # Sampling — single source of truth for validation latents
@@ -204,7 +213,10 @@ class FlashDiTModule(L.LightningModule):
         noise = torch.randn(n, self.model.in_channels, hp.val_seq_len, device=device)
 
         fn = heun_sample if hp.val_sampler == "heun" else euler_sample
-        with torch.no_grad():
+        # bf16 autocast matches training precision. The compiled attention path
+        # (flash-attn via torch.compile) rejects fp32 inputs, and without this
+        # wrap sampling can hit "FlashAttention only support fp16 and bf16".
+        with torch.no_grad(), torch.autocast(device_type="cuda", dtype=torch.bfloat16):
             return fn(
                 self.ema.ema_model, noise, y,
                 n_steps=hp.val_n_steps, cfg_scale=hp.val_cfg_scale,
@@ -275,7 +287,43 @@ class FlashDiTModule(L.LightningModule):
             step=step,
             commit=True,
         )
-        wandb.log_artifact(artifact)
+        # wait() blocks until the artifact has finished uploading — otherwise
+        # _cleanup_generated_dir may delete the source WAVs before wandb has
+        # read them for upload, failing the artifact with missing-file errors.
+        logged = wandb.log_artifact(artifact)
+        try:
+            logged.wait()
+        except Exception:
+            pass
+
+    def _cleanup_generated_dir(self, wav_paths: list[Path], keep_n: int = 2) -> None:
+        """Delete per-epoch generated artifacts after metrics + WandB upload.
+
+        Keeps the first ``keep_n`` WAVs (the ones sent to WandB, preserved
+        locally for manual inspection) and removes:
+          - every other WAV
+          - the ``embeddings/`` and ``convert/`` cache subdirs populated by
+            kadtk_vendored for KAD
+
+        Without this the per-epoch generated dirs accumulate linearly with
+        the number of validations — for 1000 epochs and val every 10 epochs
+        that is ~9 GB of disposable WAVs + ~300 MB of per-epoch PANNs .npy
+        that are never read again after the KAD call in the same val.
+        """
+        import shutil
+
+        if not wav_paths:
+            return
+        gen_dir = wav_paths[0].parent
+        for sub in ("embeddings", "convert"):
+            d = gen_dir / sub
+            if d.is_dir():
+                shutil.rmtree(d, ignore_errors=True)
+        for p in wav_paths[keep_n:]:
+            try:
+                p.unlink()
+            except (FileNotFoundError, OSError):
+                pass
 
     def _score_audiobox(self, wav_paths: list[Path]) -> None:
         """Score generated WAVs with Audiobox Aesthetics and log mean metrics."""
@@ -413,8 +461,19 @@ class FlashDiTModule(L.LightningModule):
         from ..evaluation.kad import compute_kad
 
         ref_dir = kad_cfg.get("reference_dir")
-        if not ref_dir:
-            warn("[val] kad: evaluation.kad.reference_dir not set — skipping")
+        ref_manifest = kad_cfg.get("reference_manifest")
+        ref_cache_dir = kad_cfg.get("reference_cache_dir")
+        if not ref_dir and not ref_manifest:
+            warn(
+                "[val] kad: neither evaluation.kad.reference_dir nor "
+                "reference_manifest set — skipping"
+            )
+            return
+        if ref_dir and ref_manifest:
+            warn(
+                "[val] kad: both reference_dir and reference_manifest set — "
+                "skipping (set exactly one)"
+            )
             return
         if not gen_dir.is_dir() or not any(gen_dir.glob("*.wav")):
             warn(f"[val] kad: no generated WAVs at {gen_dir} — skipping")
@@ -426,6 +485,8 @@ class FlashDiTModule(L.LightningModule):
             result = compute_kad(
                 generated_dir=gen_dir,
                 reference_dir=ref_dir,
+                reference_manifest=ref_manifest,
+                reference_cache_dir=ref_cache_dir,
                 model_name=str(kad_cfg.get("model_name", "panns-wavegram-logmel")),
                 device=str(kad_cfg.get("device", "cuda")),
                 workers=int(kad_cfg.get("workers", 8)),

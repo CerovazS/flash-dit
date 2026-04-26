@@ -185,6 +185,155 @@ def test_compute_kad_rejects_missing_directories(tmp_path):
         )
 
 
+def test_compute_kad_requires_exactly_one_reference(tmp_path):
+    sr = 16000
+    gen = tmp_path / "gen"
+    _make_wav_dir(gen, count=2, sr=sr, seed=0)
+
+    # Neither given.
+    with pytest.raises(ValueError, match="exactly one"):
+        compute_kad(
+            generated_dir=gen,
+            device="cpu", workers=1,
+            model=FakeModelLoader(num_features=8, sr=sr, n_frames=2),
+        )
+
+    # Both given.
+    ref = tmp_path / "ref"
+    _make_wav_dir(ref, count=2, sr=sr, seed=1)
+    manifest = tmp_path / "m.txt"
+    manifest.write_text(str((ref / "clip_000.wav").resolve()) + "\n")
+    with pytest.raises(ValueError, match="exactly one"):
+        compute_kad(
+            generated_dir=gen,
+            reference_dir=ref,
+            reference_manifest=manifest,
+            device="cpu", workers=1,
+            model=FakeModelLoader(num_features=8, sr=sr, n_frames=2),
+        )
+
+
+def test_compute_kad_manifest_mode(tmp_path):
+    """Reference via manifest: audio files scattered across subdirs,
+    embeddings cached under a dedicated cache_root."""
+    sr = 16000
+    # Scatter reference audio across multiple subfolders (mimics FMA layout).
+    ref_a = tmp_path / "data" / "000"
+    ref_b = tmp_path / "data" / "001"
+    _make_wav_dir(ref_a, count=4, sr=sr, seed=0)
+    _make_wav_dir(ref_b, count=4, sr=sr, seed=2)
+
+    gen = tmp_path / "gen"
+    _make_wav_dir(gen, count=8, sr=sr, seed=1)
+
+    # Sibling files must have distinct stems because the cache is keyed by stem.
+    for i, p in enumerate(sorted(ref_b.glob("clip_*.wav"))):
+        p.rename(ref_b / f"track_{i:03d}.wav")
+
+    manifest = tmp_path / "manifest.txt"
+    with open(manifest, "w") as f:
+        f.write("# header comment\n")
+        f.write("\n")  # blank line
+        for p in sorted(ref_a.glob("*.wav")):
+            f.write(str(p.resolve()) + "\n")
+        for p in sorted(ref_b.glob("*.wav")):
+            f.write(str(p.resolve()) + "\n")
+
+    cache_dir = tmp_path / "kad_cache"
+
+    result = compute_kad(
+        generated_dir=gen,
+        reference_manifest=manifest,
+        reference_cache_dir=cache_dir,
+        device="cpu", workers=1, scale_factor=1.0,
+        model=FakeModelLoader(num_features=8, sr=sr, n_frames=4),
+    )
+
+    assert isinstance(result, KADResult)
+    assert result.reference_mode == "manifest"
+    assert result.reference_dir is None
+    assert result.reference_manifest == str(manifest.resolve())
+    assert result.reference_cache_dir == str(cache_dir.resolve())
+    assert result.n_reference == 8
+    assert result.n_generated == 8
+    assert result.n_reference_embeddings == 8 * 4
+    # Caches must be under cache_dir, NOT next to the source audio.
+    emb_root = cache_dir / "embeddings" / result.model_name
+    assert emb_root.is_dir()
+    assert len(list(emb_root.glob("*.npy"))) == 8
+    # And no cache leaked into the scattered source subdirs.
+    assert not (ref_a / "embeddings").exists()
+    assert not (ref_b / "embeddings").exists()
+
+
+def test_compute_kad_manifest_default_cache_dir(tmp_path):
+    """Without reference_cache_dir the cache lands at <manifest>.kad_cache/."""
+    sr = 16000
+    ref = tmp_path / "audio"
+    _make_wav_dir(ref, count=3, sr=sr, seed=0)
+    gen = tmp_path / "gen"
+    _make_wav_dir(gen, count=3, sr=sr, seed=1)
+
+    manifest = tmp_path / "manifest.txt"
+    with open(manifest, "w") as f:
+        for p in sorted(ref.glob("*.wav")):
+            f.write(str(p.resolve()) + "\n")
+
+    result = compute_kad(
+        generated_dir=gen,
+        reference_manifest=manifest,
+        device="cpu", workers=1, scale_factor=1.0,
+        model=FakeModelLoader(num_features=8, sr=sr, n_frames=3),
+    )
+    assert result.reference_cache_dir is not None
+    default_cache = Path(result.reference_cache_dir)
+    assert default_cache.name == "manifest.txt.kad_cache"
+    assert (default_cache / "embeddings" / result.model_name).is_dir()
+
+
+def test_compute_kad_manifest_skips_missing_paths(tmp_path):
+    sr = 16000
+    ref = tmp_path / "audio"
+    _make_wav_dir(ref, count=4, sr=sr, seed=0)
+    gen = tmp_path / "gen"
+    _make_wav_dir(gen, count=4, sr=sr, seed=1)
+
+    manifest = tmp_path / "m.txt"
+    with open(manifest, "w") as f:
+        for p in sorted(ref.glob("*.wav")):
+            f.write(str(p.resolve()) + "\n")
+        f.write(str(tmp_path / "audio" / "nonexistent.wav") + "\n")
+
+    result = compute_kad(
+        generated_dir=gen,
+        reference_manifest=manifest,
+        reference_cache_dir=tmp_path / "c",
+        device="cpu", workers=1, scale_factor=1.0,
+        model=FakeModelLoader(num_features=8, sr=sr, n_frames=3),
+    )
+    assert result.n_reference == 4  # nonexistent dropped
+
+
+def test_compute_kad_manifest_rejects_relative_path(tmp_path):
+    sr = 16000
+    ref = tmp_path / "audio"
+    _make_wav_dir(ref, count=2, sr=sr, seed=0)
+    gen = tmp_path / "gen"
+    _make_wav_dir(gen, count=2, sr=sr, seed=1)
+
+    manifest = tmp_path / "m.txt"
+    manifest.write_text("relative/path.wav\n")
+
+    with pytest.raises(ValueError, match="absolute"):
+        compute_kad(
+            generated_dir=gen,
+            reference_manifest=manifest,
+            reference_cache_dir=tmp_path / "c",
+            device="cpu", workers=1,
+            model=FakeModelLoader(num_features=8, sr=sr, n_frames=2),
+        )
+
+
 def test_eval_kad_cli_has_help():
     import subprocess
 
