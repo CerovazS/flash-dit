@@ -1,0 +1,26 @@
+# Stable Audio Open 1.0 architectural identity (prepend mode).
+# Differs from vanilla_sit on:
+#   - bias-less LayerNorm with learnable γ (vs RMSNorm)
+#   - SwiGLU mult=4.0 (vs 8/3)
+#   - partial RoPE on self-attn (rot_dim = max(head_dim/2, 32))
+#   - residual zero-init on out_proj/down (vs gate zero-init)
+#   - residual zero-init Conv1d pre/post wrappers
+#   - prepend-token conditioning (vs AdaLN-Zero per block)
+# No cross-attention: under class-only conditioning the cross-attn context
+# would collapse to a single y_emb token, making the operation degenerate to
+# a position-independent additive bias `MLP(y_emb)`. Dropping it preserves
+# SAO's prepend-mode identity at clean param parity with vanilla_sit.
+_target_: flash_dit.models.sao_dit.SAODiTTransformer
+name: sao_dit
+in_channels: 64
+d_model: 768
+n_layers: 12
+n_heads: 12
+mlp_mult: 4.0           # SAO default
+n_classes: 17
+cfg_dropout: 0.1
+mlp_type: swiglu        # SAO uses SwiGLU
+use_fa3: false          # set true on H100
+dropout: 0.0
+max_seq_len: 256        # internally bumped to +1 for the prepended token
+partial_rope: true      # rotate only first max(head_dim/2, 32) dims

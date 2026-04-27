@@ -41,10 +41,33 @@ class ReLUSquared(nn.Module):
         return self.down(F.relu(self.up(x)).square())
 
 
+class GELUMlp(nn.Module):
+    """GELU-tanh feed-forward used by the original Meta DiT.
+
+    Mirrors timm ``Mlp`` (``Linear → GELU → Linear``) with
+    ``approximate="tanh"`` and ``bias=True`` on both linears, no dropout.
+    Default ``mlp_mult=4.0`` matches DiT ``models.py:105,157``.
+    """
+
+    def __init__(self, d_model: int, mlp_mult: float = 4.0) -> None:
+        super().__init__()
+        hidden = int(d_model * mlp_mult)
+        self.fc1 = nn.Linear(d_model, hidden, bias=True)
+        self.act = nn.GELU(approximate="tanh")
+        self.fc2 = nn.Linear(hidden, d_model, bias=True)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.fc2(self.act(self.fc1(x)))
+
+
 def build_mlp(d_model: int, mlp_mult: float, mlp_type: str) -> nn.Module:
     """Factory: returns the correct MLP given mlp_type."""
     if mlp_type == "swiglu":
         return SwiGLU(d_model, mlp_mult)
     if mlp_type == "relu2":
         return ReLUSquared(d_model, mlp_mult)
-    raise ValueError(f"Unknown mlp_type: {mlp_type!r}. Choose 'swiglu' or 'relu2'.")
+    if mlp_type == "gelu":
+        return GELUMlp(d_model, mlp_mult)
+    raise ValueError(
+        f"Unknown mlp_type: {mlp_type!r}. Choose 'swiglu', 'relu2', or 'gelu'."
+    )

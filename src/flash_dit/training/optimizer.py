@@ -190,19 +190,34 @@ def _is_adamw_no_decay(name: str, p: torch.nn.Parameter) -> bool:
 
 
 def _is_muon_matrix_param(name: str, p: torch.nn.Parameter) -> bool:
-    """Return True for hidden projection matrices that are safe for Muon."""
+    """Return True for hidden projection matrices that are safe for Muon.
+
+    Excludes 3-D Conv1d weights (sao_dit's preprocess/postprocess wrappers
+    have shape ``(C, C, 1)`` — ``ndim==3``, so the first guard rejects them).
+    """
     if p.ndim != 2:
         return False
 
     muon_suffixes = (
+        # vanilla_sit / flash_dit / dit_meta — DiTBlock uses ``self.attn`` and ``self.mlp``
         ".attn.q_proj.weight",
         ".attn.k_proj.weight",
         ".attn.v_proj.weight",
         ".attn.out_proj.weight",
         ".attn.qkv.weight",
-        ".mlp.gate.weight",
-        ".mlp.up.weight",
-        ".mlp.down.weight",
+        ".mlp.gate.weight",       # SwiGLU
+        ".mlp.up.weight",         # SwiGLU
+        ".mlp.down.weight",       # SwiGLU
+        ".mlp.fc1.weight",        # GELUMlp (dit_meta)
+        ".mlp.fc2.weight",        # GELUMlp (dit_meta)
+        # sao_dit — SAOBlock uses ``self.self_attn`` and ``self.ff``
+        ".self_attn.qkv.weight",
+        ".self_attn.out_proj.weight",
+        ".ff.gate.weight",        # SwiGLU under SAOBlock
+        ".ff.up.weight",
+        ".ff.down.weight",
+        ".ff.fc1.weight",         # GELUMlp under SAOBlock (allowed by mlp_type=gelu)
+        ".ff.fc2.weight",
     )
     return name.startswith("blocks.") and name.endswith(muon_suffixes)
 

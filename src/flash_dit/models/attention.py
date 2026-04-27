@@ -15,7 +15,7 @@ except ImportError:
     _HAS_FA2 = False
 
 try:
-    from flash_attn_interface import flash_attn_func as fa3_func  # H100 only
+    from flash_attn_interface import flash_attn_func as fa3_func  # H100, H200 only
     _HAS_FA3 = True
 except ImportError:
     _HAS_FA3 = False
@@ -74,6 +74,18 @@ class MultiHeadAttention(nn.Module):
     """Standard MHA — baseline for vanilla_sit.
 
     Uses Flash Attention 2 if available, otherwise SDPA.
+
+    Args:
+        d_model: hidden size.
+        n_heads: number of query heads.
+        rope: shared :class:`RotaryEmbedding` instance.
+        dropout: attention dropout probability.
+        qkv_bias: when True, the QKV projection has a bias (matches DiT
+            ``models.py:108`` ``qkv_bias=True``). Default False.
+        zero_init_out: when True, ``out_proj.weight`` is zero-init at
+            construction (SAO-style residual zero-init). Default False.
+        rope_active: when False, RoPE is skipped — used by ``dit_meta`` which
+            provides absolute sin-cos pos embeddings outside the block.
     """
 
     def __init__(
@@ -82,6 +94,9 @@ class MultiHeadAttention(nn.Module):
         n_heads: int,
         rope: RotaryEmbedding,
         dropout: float = 0.0,
+        qkv_bias: bool = False,
+        zero_init_out: bool = False,
+        rope_active: bool = True,
     ) -> None:
         super().__init__()
         assert d_model % n_heads == 0
@@ -89,9 +104,12 @@ class MultiHeadAttention(nn.Module):
         self.head_dim = d_model // n_heads
         self.dropout = dropout
         self.rope = rope
+        self.rope_active = rope_active
 
-        self.qkv = nn.Linear(d_model, 3 * d_model, bias=False)
+        self.qkv = nn.Linear(d_model, 3 * d_model, bias=qkv_bias)
         self.out_proj = nn.Linear(d_model, d_model, bias=False)
+        if zero_init_out:
+            nn.init.zeros_(self.out_proj.weight)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """x: (B, T, C) → (B, T, C)."""
@@ -101,7 +119,8 @@ class MultiHeadAttention(nn.Module):
         k = rearrange(k, "b t (h d) -> b t h d", h=self.n_heads)
         v = rearrange(v, "b t (h d) -> b t h d", h=self.n_heads)
 
-        q, k = self.rope(q, k)
+        if self.rope_active:
+            q, k = self.rope(q, k)
 
         dp = self.dropout if self.training else 0.0
 
@@ -136,6 +155,9 @@ class GroupedQueryAttention(nn.Module):
         rope: RotaryEmbedding,
         dropout: float = 0.0,
         use_fa3: bool = False,
+        qkv_bias: bool = False,
+        zero_init_out: bool = False,
+        rope_active: bool = True,
     ) -> None:
         super().__init__()
         assert d_model % n_heads == 0
@@ -147,11 +169,14 @@ class GroupedQueryAttention(nn.Module):
         self.dropout = dropout
         self.use_fa3 = use_fa3 and _HAS_FA3
         self.rope = rope
+        self.rope_active = rope_active
 
-        self.q_proj = nn.Linear(d_model, n_heads * self.head_dim, bias=False)
-        self.k_proj = nn.Linear(d_model, n_kv_heads * self.head_dim, bias=False)
-        self.v_proj = nn.Linear(d_model, n_kv_heads * self.head_dim, bias=False)
+        self.q_proj = nn.Linear(d_model, n_heads * self.head_dim, bias=qkv_bias)
+        self.k_proj = nn.Linear(d_model, n_kv_heads * self.head_dim, bias=qkv_bias)
+        self.v_proj = nn.Linear(d_model, n_kv_heads * self.head_dim, bias=qkv_bias)
         self.out_proj = nn.Linear(d_model, d_model, bias=False)
+        if zero_init_out:
+            nn.init.zeros_(self.out_proj.weight)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """x: (B, T, C) → (B, T, C)."""
@@ -159,7 +184,8 @@ class GroupedQueryAttention(nn.Module):
         k = rearrange(self.k_proj(x), "b t (h d) -> b t h d", h=self.n_kv_heads)
         v = rearrange(self.v_proj(x), "b t (h d) -> b t h d", h=self.n_kv_heads)
 
-        q, k = self.rope(q, k)
+        if self.rope_active:
+            q, k = self.rope(q, k)
 
         dp = self.dropout if self.training else 0.0
 
@@ -191,10 +217,19 @@ def build_attention(
     attention_type: str,
     dropout: float = 0.0,
     use_fa3: bool = False,
+    qkv_bias: bool = False,
+    zero_init_out: bool = False,
+    rope_active: bool = True,
 ) -> nn.Module:
     """Factory: returns the correct attention module given attention_type."""
     if attention_type == "mha":
-        return MultiHeadAttention(d_model, n_heads, rope, dropout)
+        return MultiHeadAttention(
+            d_model, n_heads, rope, dropout,
+            qkv_bias=qkv_bias, zero_init_out=zero_init_out, rope_active=rope_active,
+        )
     if attention_type == "gqa":
-        return GroupedQueryAttention(d_model, n_heads, n_kv_heads, rope, dropout, use_fa3)
+        return GroupedQueryAttention(
+            d_model, n_heads, n_kv_heads, rope, dropout, use_fa3,
+            qkv_bias=qkv_bias, zero_init_out=zero_init_out, rope_active=rope_active,
+        )
     raise ValueError(f"Unknown attention_type: {attention_type!r}. Choose 'mha' or 'gqa'.")
