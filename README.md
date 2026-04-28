@@ -58,6 +58,37 @@ uv run pytest tests/ -q
 > `HF_TOKEN` before training or sampling. Without it the run continues but
 > validation generation and FAD are skipped.
 
+### Reference baseline run
+
+Reproduce the reference `vanilla_sit` baseline used as the architectural
+control — 1000 epochs on FMA Medium, MSE every 5 epochs, generative metrics
+(latent MMD + KAD against the FMA test split) every 10 epochs, WandB on:
+
+```bash
+RUN_NAME=vanilla_sit_$(date +%Y%m%d_%H%M%S)
+
+CUDA_VISIBLE_DEVICES=0 uv run python scripts/train.py \
+    model=vanilla_sit \
+    run_name=$RUN_NAME \
+    output_dir=outputs/runs/$RUN_NAME \
+    data.h5_path=outputs/latents/stable_audio_open/fma_medium.h5 \
+    use_wandb=true \
+    trainer.max_epochs=1000 \
+    trainer.check_val_every_n_epoch=5 \
+    val.generate_every_n_epochs=10 \
+    evaluation.latent_mmd.enabled=true \
+    evaluation.kad.enabled=true \
+    evaluation.kad.reference_manifest=outputs/kad_ref/fma_medium_test.txt \
+    evaluation.kad.reference_cache_dir=outputs/kad_ref/fma_medium_test.kad_cache \
+    evaluation.kad.workers=2
+```
+
+> [!TIP]
+> Swap `model=vanilla_sit` for `flash_dit`, `flash_dit_recurse`, `dit_meta`,
+> or `sao_dit` to launch any other baseline under the same training schedule
+> — only the architecture changes, every other knob (optimizer, eval cadence,
+> KAD reference) stays fixed for a clean comparison.
+
 ## Architecture
 
 - **Diffusion**: rectified flow matching, target velocity `v = ε - x_0`, MSE loss, logit-normal `t ~ N(0, 1) → σ(·)`.
