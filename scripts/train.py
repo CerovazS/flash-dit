@@ -87,16 +87,16 @@ def main(cfg: DictConfig) -> None:
         h5_path=cfg.data.h5_path,
     )
 
-    # Attach VAE decoder and normalisation stats for generation during validation
-    vae = _load_vae(cfg)
-    if vae is not None:
-        lit.vae = vae.eval()
+    # Attach autoencoder decoder + normalisation stats for validation generation
+    autoencoder = _load_autoencoder(cfg)
+    if autoencoder is not None:
+        lit.vae = autoencoder.to("cuda").eval()
         mean, std = _load_norm_stats(cfg.data.h5_path)
         lit.latent_mean = mean
         lit.latent_std  = std
-        ok("VAE decoder attached for validation generation.")
+        ok(f"Autoencoder {autoencoder.metadata.encoder_id!r} attached for validation generation.")
     else:
-        warn("VAE not loaded — generation during validation disabled.")
+        warn("Autoencoder not loaded — generation during validation disabled.")
 
     # ------------------------------------------------------------------
     # Trainer
@@ -160,44 +160,22 @@ def main(cfg: DictConfig) -> None:
     ok("Training complete.")
 
 
-def _load_vae(cfg: DictConfig):
-    """Try to load the VAE decoder. Returns None if it fails (e.g. no HF token)."""
-    import json
+def _load_autoencoder(cfg: DictConfig):
+    """Build the configured autoencoder. Returns None on failure (no HF token, etc.).
 
-    hf_token = os.environ.get("HF_TOKEN", "")
-    if not hf_token:
+    Single point of construction — every encoder-specific quirk lives in the
+    wrapper registered under ``cfg.autoencoder.kind``.
+    """
+    from flash_dit.autoencoder import build_autoencoder
+
+    if "autoencoder" not in cfg:
+        warn("cfg.autoencoder missing — generation during validation disabled.")
         return None
     try:
-        from huggingface_hub import hf_hub_download
-        from safetensors.torch import load_file
-        from stable_audio_tools.models.factory import create_model_from_config
-
-        cache_dir = str(cfg.vae.cache_dir)
-
-        def _hf_download(filename: str) -> str:
-            try:
-                return hf_hub_download(cfg.vae.hf_repo, filename,
-                                       token=hf_token, cache_dir=cache_dir,
-                                       local_files_only=True)
-            except Exception:
-                info(f"VAE: {filename} not in cache, downloading…")
-                return hf_hub_download(cfg.vae.hf_repo, filename,
-                                       token=hf_token, cache_dir=cache_dir)
-
-        config_path = _hf_download("model_config.json")
-        ckpt_path   = _hf_download("model.safetensors")
-        with open(config_path) as f:
-            model_cfg = json.load(f)
-        model = create_model_from_config(model_cfg)
-        state = load_file(ckpt_path)
-        # AutoencoderPretransform.load_state_dict delegates to self.model.load_state_dict,
-        # so keys must be relative to the inner autoencoder (strip "pretransform.model.").
-        pretransform_state = {k.removeprefix("pretransform.model."): v
-                               for k, v in state.items() if k.startswith("pretransform.model.")}
-        model.pretransform.load_state_dict(pretransform_state, strict=True)
-        return model.pretransform.cuda()
+        spec = OmegaConf.to_container(cfg.autoencoder, resolve=True)
+        return build_autoencoder(spec)
     except Exception as exc:
-        warn(f"Could not load VAE: {exc}")
+        warn(f"Could not build autoencoder: {exc}")
         return None
 
 

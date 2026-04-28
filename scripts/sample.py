@@ -10,8 +10,6 @@ Usage:
 from __future__ import annotations
 
 import argparse
-import json
-import os
 from datetime import datetime
 from pathlib import Path
 
@@ -87,27 +85,21 @@ def main() -> None:
         warn(f"VAE not available — saved raw latents to {out_dir}/latents.pt")
 
 
-def _load_vae(device: torch.device):
-    hf_token = os.environ.get("HF_TOKEN", "")
-    if not hf_token:
-        warn("HF_TOKEN not set — cannot load VAE decoder.")
-        return None
-    try:
-        from huggingface_hub import hf_hub_download
-        from safetensors.torch import load_file
-        from stable_audio_tools.models.factory import create_model_from_config
+def _load_vae(device: torch.device, kind: str = "stable_audio_open"):
+    """Build the autoencoder via the registry.
 
-        config_path = hf_hub_download("stabilityai/stable-audio-open-1.0", "model_config.json", token=hf_token)
-        ckpt_path   = hf_hub_download("stabilityai/stable-audio-open-1.0", "model.safetensors", token=hf_token)
-        with open(config_path) as f:
-            model_cfg = json.load(f)
-        model = create_model_from_config(model_cfg)
-        state = load_file(ckpt_path)
-        pt_state = {k.removeprefix("pretransform."): v for k, v in state.items() if k.startswith("pretransform.")}
-        model.pretransform.load_state_dict(pt_state, strict=False)
-        return model.pretransform.eval().to(device)
+    Defaults to Stable Audio Open. Future CLI extension: ``--autoencoder``
+    forwarded here so a sample.py invocation can decode latents from any
+    encoder used at training time. The wrapper's metadata is the source
+    of truth for sample rate / channel count.
+    """
+    from flash_dit.autoencoder import build_autoencoder
+
+    try:
+        ae = build_autoencoder({"kind": kind})
+        return ae.to(device).eval()
     except Exception as exc:
-        warn(f"Failed to load VAE: {exc}")
+        warn(f"Failed to load autoencoder {kind!r}: {exc}")
         return None
 
 

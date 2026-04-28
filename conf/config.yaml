@@ -4,6 +4,7 @@ defaults:
   - optimizer: muon
   - data: fma_medium
   - trainer: single_gpu
+  - autoencoder: stable_audio_open
   - _self_
 
 run_name: ${model.name}_${now:%Y%m%d_%H%M%S}
@@ -14,10 +15,6 @@ use_wandb: false
 resume_from: null
 
 ema_beta: 0.9999
-
-vae:
-  hf_repo: stabilityai/stable-audio-open-1.0
-  cache_dir: /leonardo_scratch/fast/IscrC_LENS/lcerovaz/flash-dit-cache
 
 val:
   # Unified validation cadence. Every `generate_every_n_epochs` epochs the

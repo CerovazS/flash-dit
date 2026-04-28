@@ -21,7 +21,6 @@ HDF5 attrs:
 from __future__ import annotations
 
 import argparse
-import json
 import os
 from pathlib import Path
 
@@ -31,19 +30,22 @@ import torch
 import torchaudio
 from tqdm import tqdm
 
+from flash_dit.autoencoder import build_autoencoder
 from flash_dit.utils.console import error, info, ok, warn
 
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
-SAMPLE_RATE    = 44100
 # 215 × 2048 = 440320 samples = 9.985 s ≈ 10 s.
 # Chosen so that a standard 30 s FMA track yields exactly 3 non-overlapping chunks
 # (440320 × 3 = 1320960 < 1323000 = 30 s × 44100).
 # Next multiple up (216 × 2048 = 442368 = 10.03 s) would give only 2 chunks per track.
-CHUNK_SAMPLES  = 440320          # 9.985 s at 44.1 kHz
-VAE_STRIDE     = 2048            # temporal compression ratio of Oobleck
-LATENT_FRAMES  = CHUNK_SAMPLES // VAE_STRIDE   # = 215
+# These constants are SAO-specific; once we add a non-SAO encoder the per-encoder
+# values come from the autoencoder metadata (sample_rate, compression_ratios[0]).
+SAMPLE_RATE     = 44100
+CHUNK_SAMPLES   = 440320          # 9.985 s at 44.1 kHz
+VAE_STRIDE      = 2048
+LATENT_FRAMES   = CHUNK_SAMPLES // VAE_STRIDE   # = 215
 LATENT_CHANNELS = 64
 
 HF_REPO   = "stabilityai/stable-audio-open-1.0"
@@ -66,46 +68,22 @@ BATCH_SIZE = 8   # encode 8 tracks per GPU call (iterate_batch disabled in load_
 # VAE loading
 # ---------------------------------------------------------------------------
 
-def load_vae(hf_token: str) -> torch.nn.Module:
-    """Download (or load from cache) and return the Oobleck VAE encoder."""
-    from huggingface_hub import hf_hub_download
-    from stable_audio_tools.models.factory import create_model_from_config
+def load_vae(hf_token: str):
+    """Build the SAO autoencoder via the flash_dit.autoencoder registry.
 
-    info("Downloading model config from HuggingFace…")
-    config_path = hf_hub_download(
-        HF_REPO, "model_config.json", token=hf_token,
-        cache_dir=str(CACHE_DIR / "hf_cache"),
-    )
-    ckpt_path = hf_hub_download(
-        HF_REPO, "model.safetensors", token=hf_token,
-        cache_dir=str(CACHE_DIR / "hf_cache"),
-    )
-
-    with open(config_path) as f:
-        config = json.load(f)
-
-    model = create_model_from_config(config)
-
-    from safetensors.torch import load_file
-    state = load_file(ckpt_path)
-    # Load only pretransform (VAE) weights to avoid OOM with the full DiT.
-    # AutoencoderPretransform.load_state_dict delegates to self.model.load_state_dict,
-    # so keys must be relative to the inner autoencoder — strip "pretransform.model.".
-    pretransform_state = {
-        k.removeprefix("pretransform.model."): v
-        for k, v in state.items()
-        if k.startswith("pretransform.model.")
-    }
-    model.pretransform.load_state_dict(pretransform_state, strict=True)
-
-    vae = model.pretransform.eval().cuda()
-    # Disable per-sample iteration so the encoder processes the full batch on GPU.
-    # stable-audio-open sets iterate_batch=True in its pretransform config, which
-    # causes the VAE to loop over the batch dimension internally — defeating any
-    # VRAM / throughput benefit from batching at the caller level.
-    vae.iterate_batch = False
-    ok("VAE loaded and ready on GPU (iterate_batch disabled).")
-    return vae
+    This used to be a 30-line snippet duplicated in three scripts; now lives
+    in :mod:`flash_dit.autoencoder.stable_audio_open`. The wrapper handles
+    weight download, prefix stripping, and the iterate_batch fix internally.
+    """
+    ae = build_autoencoder({
+        "kind": "stable_audio_open",
+        "hf_repo": HF_REPO,
+        "cache_dir": str(CACHE_DIR / "hf_cache"),
+        "hf_token": hf_token,
+        "device": "cuda",
+    })
+    ok(f"Autoencoder {ae.metadata.encoder_id!r} loaded on {ae.device}.")
+    return ae
 
 
 # ---------------------------------------------------------------------------
@@ -145,28 +123,22 @@ def load_audio_chunk(path: Path) -> torch.Tensor | None:
     return wav[:, offset : offset + CHUNK_SAMPLES]  # (2, CHUNK_SAMPLES)
 
 
-@torch.no_grad()
 def encode_batch(vae, chunks: list[torch.Tensor]) -> np.ndarray:
-    """Encode a batch of (2, CHUNK_SAMPLES) tensors through the VAE encoder.
+    """Encode a batch of ``(2, CHUNK_SAMPLES)`` tensors through the autoencoder.
 
-    Encoding runs in float32 (VAE weights are float32); output is cast to float16
-    only for compact HDF5 storage.
+    The wrapper's ``encode()`` already handles tuple/dict return unwrapping
+    and stereo coercion. Output is cast to float16 only for compact HDF5
+    storage.
 
     Args:
-        chunks: list of B tensors each shaped (2, CHUNK_SAMPLES)
+        chunks: list of B tensors each shaped (2, CHUNK_SAMPLES).
 
     Returns:
-        (B, LATENT_CHANNELS, LATENT_FRAMES) float16 array.
+        ``(B, LATENT_CHANNELS, LATENT_FRAMES)`` float16 array.
     """
-    batch = torch.stack(chunks, dim=0).cuda().float()  # (B, 2, T)
-    result = vae.encode(batch)
-    if isinstance(result, tuple):
-        latents, info_dict = result
-        if isinstance(info_dict, dict) and "mean" in info_dict:
-            latents = info_dict["mean"]
-    else:
-        latents = result
-    return latents.float().cpu().numpy().astype(np.float16)  # (B, C, T_lat)
+    batch = torch.stack(chunks, dim=0)  # (B, 2, T) — wrapper sends to its device
+    latents = vae.encode(batch)
+    return latents.float().cpu().numpy().astype(np.float16)
 
 
 # ---------------------------------------------------------------------------
@@ -305,7 +277,39 @@ def main(dry_run: bool = False) -> None:
         f.attrs["std"]  = std
         ok(f"Normalisation stats: mean={mean.mean():.4f}, std={std.mean():.4f}")
 
+        # ----------------------------------------------------------------
+        # Schema v2 attrs — derived from the autoencoder's metadata plus
+        # the encoding-job context (chunk length, git SHA, timestamp).
+        # See plan.md §2 for the full schema.
+        # ----------------------------------------------------------------
+        f.attrs["schema_version"] = 2
+        for k, v in vae.metadata.to_h5_attrs().items():
+            f.attrs[k] = v
+        f.attrs["chunk_samples"] = CHUNK_SAMPLES
+        f.attrs["storage_dtype"] = "float16"
+        f.attrs["created_utc"] = _now_utc()
+        f.attrs["git_commit"] = _git_commit()
+        ok(f"Wrote v2 schema attrs (encoder_id={vae.metadata.encoder_id!r}).")
+
     ok(f"Done → {out_path}")
+
+
+def _now_utc() -> str:
+    import datetime as _dt
+    return _dt.datetime.now(_dt.UTC).isoformat(timespec="seconds")
+
+
+def _git_commit() -> str:
+    import subprocess
+    try:
+        return subprocess.check_output(
+            ["git", "rev-parse", "HEAD"],
+            cwd=Path(__file__).resolve().parent.parent,
+            stderr=subprocess.DEVNULL,
+            text=True,
+        ).strip()
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return "unknown"
 
 
 if __name__ == "__main__":

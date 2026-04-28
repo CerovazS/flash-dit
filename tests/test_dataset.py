@@ -61,3 +61,95 @@ def test_dataset_normalisation(tmp_path):
     items = torch.stack([ds[i][0] for i in range(len(ds))])  # (N, C, T)
     channel_mean = items.mean(dim=(0, 2))  # (C,)
     assert channel_mean.abs().max() < 0.5, "Normalisation not applied correctly"
+
+
+# ---------------------------------------------------------------------------
+# Schema v2 validation
+# ---------------------------------------------------------------------------
+
+
+def _make_v2_h5(tmp_path, encoder_id="stable_audio_open", domain="audio", n=20) -> str:
+    """Mock HDF5 with the v2 schema attrs populated."""
+    import h5py
+
+    path = str(tmp_path / f"v2_{encoder_id}_{domain}.h5")
+    rng = np.random.default_rng(0)
+    latents = rng.standard_normal((n, 64, 64)).astype(np.float16)
+    splits = np.array([b"train"] * (n - 5) + [b"val"] * 3 + [b"test"] * 2, dtype=object)
+
+    with h5py.File(path, "w") as f:
+        f.create_dataset("latents", data=latents)
+        f.create_dataset("genres", data=rng.integers(0, 16, n).astype(np.int64))
+        f.create_dataset("track_ids", data=np.array([f"t{i}".encode() for i in range(n)]))
+        f.create_dataset("split", data=splits)
+        f.attrs["mean"] = latents.mean(axis=(0, 2)).astype(np.float32)
+        f.attrs["std"] = latents.std(axis=(0, 2)).astype(np.float32) + 1e-6
+        f.attrs["schema_version"] = 2
+        f.attrs["encoder_id"] = encoder_id
+        f.attrs["domain"] = domain
+        f.attrs["latent_format"] = "BCT" if domain == "audio" else "BCHW"
+    return path
+
+
+def test_dataset_validation_passes_on_match(tmp_path):
+    from flash_dit.data.latent_dataset import LatentDataset
+
+    h5 = _make_v2_h5(tmp_path, encoder_id="stable_audio_open", domain="audio")
+    # No exception raised
+    ds = LatentDataset(
+        h5, split="train",
+        expected_encoder_id="stable_audio_open",
+        expected_domain="audio",
+    )
+    assert len(ds) > 0
+
+
+def test_dataset_validation_fails_on_encoder_mismatch(tmp_path):
+    from flash_dit.data.latent_dataset import EncoderMismatchError, LatentDataset
+
+    h5 = _make_v2_h5(tmp_path, encoder_id="stable_audio_open")
+    with pytest.raises(EncoderMismatchError, match="encoder_id="):
+        LatentDataset(
+            h5, split="train",
+            expected_encoder_id="music2latent",
+        )
+
+
+def test_dataset_validation_fails_on_domain_mismatch(tmp_path):
+    from flash_dit.data.latent_dataset import EncoderMismatchError, LatentDataset
+
+    h5 = _make_v2_h5(tmp_path, domain="audio")
+    with pytest.raises(EncoderMismatchError, match="domain="):
+        LatentDataset(
+            h5, split="train",
+            expected_domain="vision",
+        )
+
+
+def test_dataset_backcompat_shim_warns_and_proceeds(tmp_path, recwarn):
+    """Pre-v2 file (no encoder_id / domain) is accepted as SAO audio with a warning."""
+    import flash_dit.data.latent_dataset as ds_mod
+    from flash_dit.data.latent_dataset import LatentDataset
+
+    # Reset the module-global once-flag so this test sees the warning.
+    ds_mod._BACKCOMPAT_WARNED = False
+
+    h5 = _make_mock_h5(tmp_path)  # legacy: only mean/std attrs
+    ds = LatentDataset(
+        h5, split="train",
+        expected_encoder_id="stable_audio_open",  # matches the shim's default
+    )
+    assert len(ds) > 0
+    deprecation_warnings = [w for w in recwarn if issubclass(w.category, DeprecationWarning)]
+    assert any("pre-v2 schema" in str(w.message) for w in deprecation_warnings)
+
+
+def test_dataset_backcompat_shim_fails_on_mismatch(tmp_path):
+    """Even with the shim, a non-default expected_encoder_id raises."""
+    import flash_dit.data.latent_dataset as ds_mod
+    from flash_dit.data.latent_dataset import EncoderMismatchError, LatentDataset
+
+    ds_mod._BACKCOMPAT_WARNED = False
+    h5 = _make_mock_h5(tmp_path)
+    with pytest.raises(EncoderMismatchError):
+        LatentDataset(h5, split="train", expected_encoder_id="music2latent")

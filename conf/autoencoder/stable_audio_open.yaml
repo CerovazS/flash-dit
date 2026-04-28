@@ -1,0 +1,8 @@
+# Stable Audio Open 1.0 — 44.1 kHz stereo · 2048× compression · 64-D latent.
+# Loaded via flash_dit.autoencoder.build_autoencoder. The wrapper consolidates
+# the SAO-specific weight loading, prefix stripping, and iterate_batch fix.
+kind: stable_audio_open
+hf_repo: stabilityai/stable-audio-open-1.0
+cache_dir: ${oc.env:FLASH_DIT_CACHE,/tmp/flash-dit-cache}
+# domain / sample_rate / latent_channels are exposed by the wrapper at runtime
+# via metadata; do not duplicate them here, the wrapper is the source of truth.

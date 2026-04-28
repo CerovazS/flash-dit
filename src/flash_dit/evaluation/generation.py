@@ -55,32 +55,30 @@ def generate_latents(
 
 def decode_latents_to_wav(
     latents: torch.Tensor,
-    vae: nn.Module,
+    vae,
     mean: torch.Tensor,
     std: torch.Tensor,
     sample_rate: int = 44100,
 ) -> list:
-    """Decode normalised latents to audio arrays using the VAE decoder.
+    """Decode normalised latents to audio arrays using the autoencoder decoder.
 
     Args:
         latents: (B, C, T) normalised latents (as output by generate_latents).
-        vae:     stable-audio-tools AudioAutoencoder in eval mode.
+        vae:     :class:`flash_dit.autoencoder.AutoencoderBackbone` in eval mode.
         mean:    (C,) per-channel normalisation mean.
         std:     (C,) per-channel normalisation std.
-        sample_rate: audio sample rate (44100 Hz).
+        sample_rate: audio sample rate (44100 Hz for SAO).
 
     Returns:
-        List of (2, T_audio) numpy float32 stereo audio arrays.
+        List of (audio_channels, T_audio) numpy float32 audio arrays.
     """
-    import numpy as np
-
     device = latents.device
     mean = mean.to(device)
     std  = std.to(device)
 
     with torch.no_grad():
         latents_raw = latents * (std[:, None] + 1e-6) + mean[:, None]
-        audio, _ = vae.decode_audio(latents_raw)  # (B, 2, T_audio)
+        audio = vae.decode(latents_raw)  # (B, audio_channels, T_audio)
 
     return [audio[i].cpu().float().clamp(-1.0, 1.0).numpy() for i in range(audio.shape[0])]
 
